@@ -47,9 +47,9 @@ mixplay-plugin/
 
 ---
 
-## ⚙️ Example cvars
+## ⚙️ cvars
 ```cfg
-amx_minplayer 10
+amx_minplayers "10"
 amx_prefix "L2KMix"
 ```
 
