@@ -40,8 +40,8 @@ mixplay-plugin/
 
 ## ✅ Quick start — install on a reHLDS server
 1. Compile plugin using **AMX Mod X Dev 1.9.0** build tools.
-2. Copy `mixplay.amxx` into `addons/amxmodx/plugins/`.
-3. Copy configs into `addons/amxmodx/configs/`.
+2. Copy `mixplay.amxx and mixneeds.amxx` into `addons/amxmodx/plugins/`.
+3. Copy configs into `/cstrike folder of server.
 4. Edit `server.cfg` to include cvars (examples below).
 5. Restart the server.
 
