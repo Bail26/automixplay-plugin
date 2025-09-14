@@ -62,6 +62,7 @@ amx_prefix "L2KMix"
 - `/score` — show current score
 - `/swap` — request swap in first round
 - `/rates` — show recommended client rates
+- `/getmenu` — show team selection menu to captain in case menu disappears
 
 ---
 
