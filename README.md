@@ -22,15 +22,15 @@ Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
 ```
 mixplay-plugin/
 ├─ src/
-│  ├─ mixplay.sma        # main plugin (placeholder)
-│  └─ mixneeds.sma       # helper (placeholder)
+│  ├─ mixplay.sma        # main plugin 
+│  └─ mixneeds.sma       # helper 
 ├─ configs/
-│  ├─ clan.cfg           # placeholder
-│  ├─ pub.cfg            # placeholder
-│  ├─ knife.cfg          # placeholder
-│  ├─ server.cfg         # placeholder
-│  └─ game.cfg           # placeholder
-├─ build/                # compiled .amxx output (optional)
+│  ├─ clan.cfg          
+│  ├─ pub.cfg            
+│  ├─ knife.cfg         
+│  ├─ server.cfg        
+│  └─ game.cfg           
+├─ build/                # compiled .amxx 
 ├─ README.md
 ├─ LICENSE
 └─ .gitignore
@@ -51,8 +51,6 @@ mixplay-plugin/
 ```cfg
 amx_minplayer 10
 amx_prefix "L2KMix"
-amx_mixplay_debug 0
-amx_mixplay_enable 1
 ```
 
 ---
@@ -65,9 +63,6 @@ amx_mixplay_enable 1
 - `/rates` — show recommended client rates
 
 ---
-
-## 📦 Release suggestion
-Tag `v1.0.0` and attach `mixplay.amxx` so server admins can drop it into plugins directly.
 
 ---
 
