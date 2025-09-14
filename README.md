@@ -1,4 +1,4 @@
-# MixPlay — Automated Match Plugin for Counter-Strike 1.6 (AMX Mod X)
+# AutoMixPlay : Automated Match Plugin for Counter-Strike 1.6 (AMX Mod X)
 
 **Make matches start automatically when enough players join.**  
 Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
@@ -12,13 +12,14 @@ Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
 - Match format: best-of-30 rounds (first to 16 wins). First half = 15 rounds, teams swap sides after 15 rounds.
 - Teams are labeled **Team A** and **Team B** for consistent display.
 - Chat & admin commands: `/rtv` (vote to restart map), `/rr` (admin round restart), `/score`, `/swap`, `/rates`.
+- During the very first round only, a player who was picked by a captain can type /swap. This lets them exchange places with any picked player who is in opposite team
 - End-of-match stats and map voting for the next map.
 - Robust error handling (captain disconnects, auto replacement, etc.).
 - Round-by-round scoreboards, sound beeps, and clean UI messages.
 
 ---
 
-## 🗂️ Repository contents
+## 🗂️ contents
 ```
 mixplay-plugin/
 ├─ src/
