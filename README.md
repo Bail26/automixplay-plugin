@@ -6,7 +6,7 @@ Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
 ---
 
 ## 🔧 What this plugin does (overview)
-- Waits for a minimum number of players (configurable via `amx_minplayer`) — until then the server runs deathmatch.
+- Waits for a minimum number of players (configurable via `amx_minplayers`) — until then the server runs deathmatch.
 - Automatically selects two random captains for a knife round.
 - Knife winner picks side and chooses the first player for their team.
 - Match format: best-of-30 rounds (first to 16 wins). First half = 15 rounds, teams swap sides after 15 rounds.
