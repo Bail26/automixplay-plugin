@@ -17,8 +17,8 @@
 
 #define MIN_RTV_PERCENT 0.51 // 51%
 
-new g_iRTVVotes[33];   // track who voted
-new g_iTotalVotes;     // number of votes cast
+new g_iRTVVotes[33];   
+new g_iTotalVotes;    
 new bool:g_bVoteInProgress;
 new g_iMenuID;
 
