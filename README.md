@@ -21,20 +21,17 @@ Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
 
 ## 🗂️ contents
 ```
-mixplay-plugin/
-├─ src/
+scripting/
 │  ├─ mixplay.sma        # main plugin 
-│  └─ mixneeds.sma       # helper 
-├─ configs/
+│  └─ mixneeds.sma       # helper (required for /rtv, /rates, and /rr admin commands)
+├─ cstrike/              # paste all these cfgs in cstrike folder of your server
 │  ├─ clan.cfg          
 │  ├─ pub.cfg            
 │  ├─ knife.cfg         
 │  ├─ server.cfg        
 │  └─ game.cfg           
-├─ build/                # compiled .amxx 
 ├─ README.md
 ├─ LICENSE
-└─ .gitignore
 ```
 
 ---
