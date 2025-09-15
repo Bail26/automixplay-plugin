@@ -1,7 +1,7 @@
 # AutoMixPlay : Automated Match Plugin for Counter-Strike 1.6 (AMX Mod X)
 
 **Make matches start automatically when enough players join.**  
-Designed for reHLDS servers and compiled with **AMX Mod X Dev 1.9.0** builds.
+Designed for reHLDS+reAPI servers and compiled with **AMX Mod X Dev 1.9.0** builds.
 
 ---
 
