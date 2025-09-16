@@ -1,4 +1,4 @@
-//Supports ReHLDS/RegameDll Builds only
+//Supports ReHLDS/RegameDll/reAPI Builds only
 
 #include <amxmodx>
 #include <amxmisc>
@@ -6,6 +6,7 @@
 #include <fakemeta>
 #include <hamsandwich>
 #include <fun>
+#include <reapi>
 
 // =====================================================
 // CONFIG / CONSTANTS
@@ -1897,14 +1898,20 @@ stock BeginHalftimeSwap()
     set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 5.0, 0.0, 0.0);
     show_dhudmessage(0, "First half is over^nSwapping teams for second half...");
 
-    // Swap all players’ CS sides
+    // Delay the actual swap by 3-4s to let HUD/chat show
+    set_task(4.0, "Task_DoTeamSwap");
+}
+
+// this runs after 4s
+public Task_DoTeamSwap()
+{
     SwapAllPlayersTeams();
 
-    // Team tags are team-specific: after swap, A=CT, B=T
+    // Update team tags AFTER swap
     g_TeamA_CS = CS_TEAM_CT;
     g_TeamB_CS = CS_TEAM_T;
 
-    // Small delay, then start second-half init (with cool restarts + “waiting for players” gate)
+    // Now wait a bit (2s) then init second half
     set_task(2.0, "Task_SecondHalfInit");
 }
 
@@ -1920,11 +1927,11 @@ public Task_SecondHalfInit()
     // Cool restarts & effects
     SecondHalf_IntroEffects();
 
-    ApplyHalfTagsForAll();
-
     // Wait until players meet min before going live
-    remove_task(TASK_WAIT_2NDHALF);
-    set_task(1.0, "SecondHalf_WaitForPlayers", TASK_WAIT_2NDHALF, "", 0, "b");
+    //remove_task(TASK_WAIT_2NDHALF);
+    //set_task(1.0, "SecondHalf_WaitForPlayers", TASK_WAIT_2NDHALF, "", 0, "b");
+
+    set_task(3.0, "SecondHalf_GoLive");
 }
 
 stock SecondHalf_IntroEffects()
@@ -1956,11 +1963,12 @@ public Task_ShowBannerSH(const text[])
     show_dhudmessage(0, text);
 }
 
-public SecondHalf_WaitForPlayers()
+/*public SecondHalf_WaitForPlayers()
 {
     if (g_MatchStatus != MS_SECONDHALFINITIAL) { remove_task(TASK_WAIT_2NDHALF); return; }
 
-    new need = get_pcvar_num(g_pCvarMinPlayers);
+    //new need = get_pcvar_num(g_pCvarMinPlayers);
+    new need = 4;
     if (need < 0) need = 0;
 
     // Count current humans on T/CT (exclude spec/hltv/bots)
@@ -1986,7 +1994,7 @@ public SecondHalf_WaitForPlayers()
     formatex(msg, charsmax(msg), "Waiting for %d player%s before starting second half", diff, (diff == 1 ? "" : "s"));
     set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 1.0, 0.0, 0.0);
     show_dhudmessage(0, msg);
-}
+}*/
 
 stock SecondHalf_GoLive()
 {
@@ -2052,13 +2060,16 @@ stock EndMatchDeclareWinner()
 // ==========================================================================
 stock SwapAllPlayersTeams()
 {
-    new players[32], pnum; get_players(players, pnum, "bch");
+    new players[32], pnum; get_players(players, pnum, "ch");
     for (new i = 0; i < pnum; i++)
     {
         new id = players[i];
-        new CsTeams:tm = cs_get_user_team(id);
-        if (tm == CS_TEAM_T)       cs_set_user_team(id, CS_TEAM_CT);
-        else if (tm == CS_TEAM_CT) cs_set_user_team(id, CS_TEAM_T);
+        new CsTeams:tm = get_member(id, m_iTeam); // or cs_get_user_team(id)
+
+        if (tm == CS_TEAM_T)
+            rg_set_user_team(id, CS_TEAM_CT, MODEL_AUTO, 1);
+        else if (tm == CS_TEAM_CT)
+            rg_set_user_team(id, CS_TEAM_T, MODEL_AUTO, 1);
     }
 }
 
@@ -2704,7 +2715,7 @@ public Task_RoundHUDFade()
     // set_dhudmessage(r,g,b, x, y, effects, fade, hold, fadein, fadeout)
     // We'll place it roughly center: y = 0.48 (close to vertical center)
     // Use a short hold (0.6s) to avoid overlap and let the repeating task handle total duration.
-    set_dhudmessage(r, g, b, -1.0, 0.48, 0, 0.0, 0.6, 0.05, 0.05);
+    set_dhudmessage(r, g, b, -1.0, 0.38, 0, 0.0, 0.6, 0.05, 0.05);
 
     // Show the prepared text (the show call uses message slot 0)
     show_dhudmessage(0, "%s", g_RoundHUDText);
