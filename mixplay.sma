@@ -980,7 +980,7 @@ public BeginCaptainSelection()
 {
     g_SideChosen = false;
     // 1) Sound + move ALL players to Spectator + chat announce
-    client_cmd(0, "spk ^"%s^"", SND_PHASE_BEEP)
+    client_cmd(0, "spk %s", SND_PHASE_BEEP);
 
     new players[32], pnum;
     get_players(players, pnum, "ch"); // humans only (no bots/HLTV)
@@ -1205,7 +1205,7 @@ public ev_DeathMsg()
 
         // Announce
         set_dhudmessage(0, 255, 128, -1.0, 0.08, 0, 0.0, 4.0, 0.0, 0.0)
-        show_dhudmessage(0, "%n wins the knife round!", g_ChatPrefix, killer)
+        show_dhudmessage(0, "%n wins the knife round!", killer)
 
         client_print_color(0, print_team_default,
             "^4%s^1 ^3%n^1 wins the knife round!", g_ChatPrefix, killer)
