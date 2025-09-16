@@ -7,7 +7,10 @@
 #include <hamsandwich>
 #include <fun>
 
-// Constants
+// =====================================================
+// CONFIG / CONSTANTS
+// =====================================================
+
 #define HUD_REFRESH_INTERVAL 1.0
 #define FULL_BANNER_HOLD     5.0
 #define NEXT_STEP_DELAY      10.0
@@ -18,9 +21,9 @@
 #define TASK_TAG_BASE 62000
 #define MAX_RETRIES  12
 #define VOTE_DURATION_SEC      8.0
-#define CHANGE_DELAY_FULL_SEC  7.0   
-#define CHANGE_DELAY_SH_SEC    7.0  
-#define CAPTAIN_START_SEC     10.0   
+#define CHANGE_DELAY_FULL_SEC  7.0   // when majority picks a different map in FULL
+#define CHANGE_DELAY_SH_SEC    7.0   // second-half: 6s HUD + change at 7s
+#define CAPTAIN_START_SEC     10.0   // if majority extends current map during FULL
 
 // HUD
 #define HUD_COUNTDOWN_INTERVAL 1.0
@@ -36,7 +39,7 @@
 #define TASK_CHANGE_MAP        2002
 #define TASK_HUD_COUNTDOWN     2003
 #define TASK_START_CAPTAINS    2004
-#define TASK_SH_COUNTDOWN     2005  
+#define TASK_SH_COUNTDOWN     2005  // new: second-half repeating HUD
 #define TASK_FH_EFFECTS_BASE   9100
 #define TASK_SH_EFFECTS_BASE   9200
 #define TASK_WAIT_2NDHALF      9301
@@ -65,87 +68,96 @@
 #define TEAMSEL_MENU_DELAY      2.0
 #define TEAMSEL_FINISH_SHINE    2.0
 
-
-// State
+// =====================================================
+// STATE
+// =====================================================
 enum MatchStatus { MS_WAITING = 0, MS_FULL, MS_CAPTAINKNIFE, MS_TEAMSELECTION, MS_FIRSTHALFINITIAL, MS_FIRSTHALF, MS_HALFSWAP, MS_SECONDHALFINITIAL, MS_SECONDHALF }
 
 new g_MatchStatus = MS_WAITING
 new g_pCvarMinPlayers
 
-new g_SwapTarget[33];     
-new bool:g_SwapPending[33]; 
+new g_SwapTarget[33];      // who they want to swap with
+new bool:g_SwapPending[33]; // true if waiting for target's answer
 
 new bool:g_mapChanged = false
 new MAP_CHANGE_FILE[PLATFORM_MAX_PATH]
 
-new bool:g_SideChosen = false  
+new bool:g_SideChosen = false   // set true only after side is chosen
 
-// Tracking toggles
-new bool:g_StatsEnabled = false;  
-new bool:g_StatsLocked  = true;    
+// ---- Tracking toggles ----
+new bool:g_StatsEnabled = false;   // true when we should record stats
+new bool:g_StatsLocked  = true;    // prevent updates at halftime & after final
 
-// Per-player stats
+// ---- Per-player stats ----
 new g_Kills[33];
 new g_Deaths[33];
 new g_HSKills[33];
 new g_KnifeKills[33];
 new g_HEKills[33];
-new g_KnifedDeaths[33];     
-new g_Plants[33];            
-new g_SuccessPlants[33];    
-new g_NameCache[33][32];
+new g_KnifedDeaths[33];       // times they died to KNIFE
+new g_Plants[33];             // total bomb plants
+new g_SuccessPlants[33];      // plants that ended up exploding
+new g_NameCache[33][32];      // last known name snapshot (handles disconnects)
+
+// Track planter for current round to attribute Exploded
 new g_LastPlanter = 0;
 
-// Internals
+// ====== Internals ======
 new g_TagRetry[33];
-new g_SHRemain = 0 
+new g_SHRemain = 0  // second-half countdown seconds (replaces static)
 
+// =====================================================
 // STATE (Map Vote)
+// =====================================================
 new bool:g_VoteActive = false
-new g_VoteMenu = INVALID_HANDLE; 
+new g_VoteMenu = INVALID_HANDLE
 
 new g_AllMaps[MAX_MAPS][MAX_NAME]
 new g_AllMapCount = 0
 
-new g_OptionMapIndex[MAX_MAPS]     
+new g_OptionMapIndex[MAX_MAPS]     // map index for each displayed menu item
 new g_OptionCount = 0
 
-new g_VoteCount[MAX_MAPS]        
-new bool:g_HasVoted[33]            
-new g_SelectedMapIdx[33]          
+new g_VoteCount[MAX_MAPS]          // votes per map (by AllMaps index)
+new bool:g_HasVoted[33]            // per player flag (1..32)
+new g_SelectedMapIdx[33]           // per player: chosen map index (AllMaps)
 
 new g_CountdownRemain = 0
 enum CountdownType { CT_NONE = 0, CT_CAPTAINS, CT_CHANGEMAP }
 new g_CountdownType = CT_NONE
 
+// used to format menu title and behavior according to status
 enum VotePhase { VP_FULL = 1, VP_SECONDHALF }
 new g_CurrentVotePhase = VP_FULL
 
+// winner result
 new g_WinnerMap[MAX_NAME]
 
-
+// =====================================================
 // STATE: Captains & flow flags
+// =====================================================
+// Captain slots are roles that persist even if the player leaves.
 enum CaptainSlot { CAP_A = 0, CAP_B = 1 }
 
-new g_CaptainPlayer[2] = {0, 0}     
-new g_CaptainTeam[2]   = {CS_TEAM_UNASSIGNED, CS_TEAM_UNASSIGNED} 
-new g_WinnerCapSlot     = -1        
-new bool:g_JoinLocked   = false     
+new g_CaptainPlayer[2] = {0, 0}      // current player index for each captain role
+new g_CaptainTeam[2]   = {CS_TEAM_UNASSIGNED, CS_TEAM_UNASSIGNED} // team for each role
+new g_WinnerCapSlot     = -1         // 0 or 1 when knife is decided
+new bool:g_JoinLocked   = false      // block manual jointeam/chooseteam until match end
 new g_CapCountdownRemain = 0
 
-new CaptainSlot:g_CurrentPickerSlot;   
-new bool:g_PickInProgress = false;     
-new g_PickMenu = INVALID_HANDLE;     
+new CaptainSlot:g_CurrentPickerSlot;    // whose turn right now
+new bool:g_PickInProgress = false;      // true while a menu is up for the current picker
+new g_PickMenu = INVALID_HANDLE;        // current selection menu handle
 
-// Score & round tracking 
-new g_ScoreA = 0, g_ScoreB = 0;     
-new g_HalfRound = 0;               
-new g_TotalRounds = 0;               
-new bool:g_ScoreLocked = true;     
+// ---- Score & round tracking ----
+new g_ScoreA = 0, g_ScoreB = 0;       // Team [A]/[B] scores (team-tag based)
+new g_HalfRound = 0;                  // 1..15 within a half
+new g_TotalRounds = 0;                // 1..30 overall (info only)
+new bool:g_ScoreLocked = true;       // prevents double counting per round end
 
 // Which CS team currently maps to Team [A] and Team [B]
-new CsTeams:g_TeamA_CS = CS_TEAM_T; 
-new CsTeams:g_TeamB_CS = CS_TEAM_CT;  
+new CsTeams:g_TeamA_CS = CS_TEAM_T;   // First half: A=T
+new CsTeams:g_TeamB_CS = CS_TEAM_CT;  // First half: B=CT
 
 new gCvarExecAutomix[64] = "clan.cfg";
 new gCvarExecPub[64]     = "pub.cfg";
@@ -153,7 +165,7 @@ new gCvarExecKnife[64]  =   "knife.cfg"
 
 // Round HUD animation state
 new g_RoundHUDText[64];
-new g_RoundHUDSteps = 0; 
+new g_RoundHUDSteps = 0; // remaining animation steps (0 = not running)
 new g_RoundHUDColorIdx = 0;
 
 new g_GameDesc[128];
@@ -164,20 +176,25 @@ new g_fwdGetGameDesc = -1;
 new gCvarChatPrefix;
 new g_ChatPrefix[32];
 
-new g_LiveScrollTaskId = TASK_FINAL_DHUD; 
+new g_LiveScrollTaskId = TASK_FINAL_DHUD; // or any free TASK id
 new g_LiveScrollSteps = 0;
 new g_LiveScrollTotal = 0;
-new Float:g_LiveScrollInterval = 0.12; 
-new g_LiveScrollRightDelaySteps = 4; 
+new Float:g_LiveScrollInterval = 0.12; // tick interval (seconds) - tweak as desired
+new g_LiveScrollRightDelaySteps = 4; // computed at start
 new g_LiveScrollText[64];
 
+// -------------------------------------
+// Plugin Info
+// -------------------------------------
 public plugin_init()
 {
-    register_plugin("Mixplay", "1.1", "B@IL&Vasu")
+    register_plugin("AutoMix", "1.1", "B@IL&Vasu")
+    g_pCvarMinPlayers = create_cvar("amx_minplayers", "10", FCVAR_NONE, "Minimum players required to set status to FULL")
 
-    g_pCvarMinPlayers = create_cvar("amx_minplayers", "10", FCVAR_NONE,"")
-    gCvarChatPrefix = create_cvar("amx_prefix", "[Automix]", FCVAR_NONE, "");
+    gCvarChatPrefix = create_cvar("amx_prefix", "[Automix]", FCVAR_NONE,  "Chat prefix for Automix messages");
 
+
+    // Block manual team join from this phase onwards
     register_clcmd("jointeam", "Cmd_BlockJoinTeam")
     register_clcmd("chooseteam", "Cmd_BlockJoinTeam")
     register_clcmd("buy", "Cmd_BlockBuy")
@@ -187,21 +204,26 @@ public plugin_init()
 
     register_clcmd("say /getmenu", "Cmd_GetMenu");
     register_clcmd("say_team /getmenu", "Cmd_GetMenu");
+
     register_clcmd("say /swap", "Cmd_SwapRequest");
+
     register_clcmd("say /score", "Cmd_ShowScore");
     register_clcmd("say_team /score", "Cmd_ShowScore");
 
     // Knife-only enforcement on spawn
     RegisterHam(Ham_Spawn, "player", "OnPlayerSpawnPost", 1)
 
+    // Detect knife round outcome
     register_event("DeathMsg", "ev_DeathMsg", "a")
 
+        // Bomb lifecycle via logevents (stable for CS 1.6)
     register_logevent("LE_BombPlanted",   3, "2=Planted_The_Bomb");
     register_logevent("LE_BombExploded",  6, "3=Target_Bombed");
     register_logevent("LE_BombDefused",   3, "2=Bomb_Defused");
 
     register_event("HLTV", "EV_RoundStart", "a", "1=0", "2=0"); 
 
+        // Detect round winner using SendAudio radio messages
     register_event("SendAudio", "EV_TerWin", "a", "2=%!MRAD_terwin");
     register_event("SendAudio", "EV_CtWin",  "a", "2=%!MRAD_ctwin");
 
@@ -215,12 +237,14 @@ public plugin_init()
         log_amx("[AutoMix] FM_GetGameDescription forward registered.");
     }
 
+    // ensure initial description is built
     g_GameDescDirty = true;
     UpdateGameDesc();
 }
 
 public plugin_cfg()
 {
+    // Resolve configs dir and build the file path once
     new configsDir[PLATFORM_MAX_PATH]
     get_configsdir(configsDir, charsmax(configsDir))
     formatex(MAP_CHANGE_FILE, charsmax(MAP_CHANGE_FILE), "%s/mapchange_flag.ini", configsDir)
@@ -232,6 +256,7 @@ public plugin_cfg()
     StartWaitingState()
 }
 
+// Called when plugin unloads (e.g., map change, manual unload)
 public plugin_end()
 {
     CancelAllMixTasks()
@@ -242,7 +267,9 @@ public plugin_precache()
     precache_sound(SND_PHASE_BEEP)
 }
 
-
+// -------------------------------------
+// Core: Check/Create/Read/Reset file
+// -------------------------------------
 stock check_map_change_file()
 {
     if (!file_exists(MAP_CHANGE_FILE))
@@ -279,6 +306,7 @@ stock check_map_change_file()
     if (equal(line, "1"))
     {
         g_mapChanged = true
+        // Reset file back to 0 right away (so the next map starts clean)
         set_map_change_flag(0)
     }
     else
@@ -287,9 +315,12 @@ stock check_map_change_file()
     }
 }
 
-
+// -------------------------------------
+// Helpers to write 0/1 and keep g_mapChanged synced
+// -------------------------------------
 stock set_map_change_flag(const value)
 {
+    // Defensive: ensure path is initialized
     if (MAP_CHANGE_FILE[0] == '^0')
     {
         log_error(AMX_ERR_GENERAL, "%s MAP_CHANGE_FILE not initialized yet.", g_ChatPrefix)
@@ -315,6 +346,7 @@ stock set_map_change_flag(const value)
     fclose(fp)
 }
 
+// Shorthand APIs you can call from anywhere
 stock set_map_flag_changed()      { set_map_change_flag(1); }
 stock set_map_flag_not_changed()  { set_map_change_flag(0); }
 
@@ -346,6 +378,7 @@ public client_putinserver(id)
     }
 }
 
+// Helper: close current pick menu safely
 stock ClosePickMenuIfOpen()
 {
     if (g_PickMenu != INVALID_HANDLE)
@@ -365,11 +398,11 @@ public client_disconnected(id)
         remove_task(TASK_TAG_BASE + id);
         g_TagRetry[id] = 0;
     }
-    
+    // 1) Waiting flow: keep the counter accurate
     if (g_MatchStatus == MS_WAITING)
     {
         EvaluateWaitingToFull()
-      
+        // don't return; a disconnecting player *could* also be a captain in edge cases
     }
 
     // 2) Captain phases
@@ -377,20 +410,23 @@ public client_disconnected(id)
     {
         new slot = GetCaptainSlot(id)
         if (slot == -1)
-            return 
+            return // non-captain leaving is irrelevant here
 
+        // Try to reassign a new captain *to the same slot & team*
         if (ReassignCaptain(slot))
         {
             client_print_color(0, print_team_red,
                 "^4%s^1 A captain left. Reassigned a new captain to ^3%s^1.", g_ChatPrefix, (g_CaptainTeam[slot] == CS_TEAM_T ? "T" : "CT"))
 
+            // 2a) Knife phase: refresh round so new captain spawns w/ knife
             if (g_MatchStatus == MS_CAPTAINKNIFE)
             {
                 server_cmd("sv_restart 1")
                 return
             }
 
-
+            // 2b) TeamSelection phase
+            //    i) If the *winner* left BEFORE side choice → re-show side menu
             if (slot == g_WinnerCapSlot && !g_SideChosen)
             {
                 if (task_exists(TASK_SIDE_MENU)) remove_task(TASK_SIDE_MENU)
@@ -398,18 +434,21 @@ public client_disconnected(id)
                 return
             }
 
+            //    ii) If side already chosen but draft not started yet (pending Task_BeginTeamSelection)
             if (g_SideChosen && task_exists(TASK_TEAMSEL_START))
             {
                 remove_task(TASK_TEAMSEL_START)
                 set_task(1.0, "Task_BeginTeamSelection", TASK_TEAMSEL_START)
-
+                // (no return; we still might need to handle on-turn replacement below)
             }
 
+            //    iii) If it was the *on-turn* captain during drafting, hand the menu to the new captain
             if (g_SideChosen && slot == g_CurrentPickerSlot)
             {
-
+                // If the old picker had an open menu, close it
                 ClosePickMenuIfOpen()
 
+                // Cancel any pending give-menu and reissue for new captain after 5s
                 if (task_exists(TASK_TEAMSEL_GIVE_MENU)) remove_task(TASK_TEAMSEL_GIVE_MENU)
                 set_task(5.0, "Task_GivePickMenu", TASK_TEAMSEL_GIVE_MENU)
             }
@@ -422,17 +461,20 @@ public client_disconnected(id)
     }
 }
 
-
+// =====================================================
+// WAITING/FULL FLOW
+// =====================================================
 stock StartWaitingState()
 {
     g_MatchStatus = MS_WAITING
 
     MarkGameDescDirty(true)
 
-
+    // Kick off the repeating DHUD task (safe re-entry)
     if (!task_exists(TASK_WAITING_HUD))
         set_task(HUD_REFRESH_INTERVAL, "Task_ShowWaitingHUD", TASK_WAITING_HUD, _, _, "b")
 
+    // Evaluate immediately in case server already has enough players
     EvaluateWaitingToFull()
 }
 
@@ -458,6 +500,7 @@ stock EvaluateWaitingToFull()
         EmitFullSound()
         AnnounceNextStep()
 
+        // Schedule your actual next phase after 10s:
         set_task(NEXT_STEP_DELAY, "Task_GoToNextPhase", TASK_NEXT_STEP)
     }
 }
@@ -497,14 +540,16 @@ stock EmitFullSound()
     client_cmd(0, "spk %s", SND_PHASE_BEEP);
 }
 
+// Placeholder for wiring the next phase
 public Task_GoToNextPhase()
 {
     if (!g_mapChanged) StartMapVote();
     else BeginCaptainSelection();
 }
 
-
+// =====================================================
 // CLEANUP
+// =====================================================
 stock CancelAllMixTasks()
 {
     // ---- Waiting/Full flow ----
@@ -540,15 +585,19 @@ stock CancelAllMixTasks()
     }
 }
 
+// =====================================================
+// UTILS
+// =====================================================
 stock CountEligiblePlayers()
 {
     new players[32], pnum
-    get_players(players, pnum, "ch") 
+    get_players(players, pnum, "ch") // c: skip bots, h: skip HLTV
     return pnum
 }
 
 stock StartMapVote()
 {
+    // Decide phase from g_MatchStatus
     if (g_MatchStatus == MS_FULL)          g_CurrentVotePhase = VP_FULL
     else if (g_MatchStatus == MS_SECONDHALF) g_CurrentVotePhase = VP_SECONDHALF
     else
@@ -557,12 +606,13 @@ stock StartMapVote()
         return
     }
 
-    if (g_VoteActive)
+    if (g_VoteActive) // Guard against re-entry
     {
         log_amx("%s StartMapVote() ignored; a vote is already active.", g_ChatPrefix)
         return
     }
 
+    // Load maps once per vote
     if (!LoadMapsIni())
     {
         client_print_color(0, print_team_red, "^4%s^1 maps.ini is empty or not found—cannot start map vote.", g_ChatPrefix)
@@ -571,6 +621,7 @@ stock StartMapVote()
 
     BuildMenuOptions()
 
+    // Reset tallies & player flags
     arrayset(g_VoteCount, 0, sizeof g_VoteCount)
     for (new i = 1; i <= 32; i++)
     {
@@ -578,6 +629,7 @@ stock StartMapVote()
         g_SelectedMapIdx[i] = -1
     }
 
+    // Create menu
     new title[128]
     if (g_CurrentVotePhase == VP_FULL)
         formatex(title, charsmax(title), "Vote for Match Map")
@@ -587,67 +639,80 @@ stock StartMapVote()
     if (g_VoteMenu != INVALID_HANDLE) menu_destroy(g_VoteMenu)
     g_VoteMenu = menu_create(title, "MapVote_Handler")
 
-  
+    // Add options in the exact order prepared
     for (new i = 0; i < g_OptionCount; i++)
     {
         new itemTxt[128], info[8]
-
+        // Format menu text; add [Extend] if it's the current map in FULL phase (already encoded in option)
         GetOptionText(i, itemTxt, charsmax(itemTxt))
 
+        // store the AllMaps index as info so handler can tally easily
         num_to_str(g_OptionMapIndex[i], info, charsmax(info))
         menu_additem(g_VoteMenu, itemTxt, info)
     }
 
+    // Show to all human players (spec or team), ignore bots/HLTV
     new players[32], pnum
-    get_players(players, pnum, "ch") 
+    get_players(players, pnum, "ch") // c: skip bots, h: skip HLTV
     for (new j = 0; j < pnum; j++)
     {
         menu_display(players[j], g_VoteMenu, 0)
     }
 
-
+    // Start vote window
     g_VoteActive = true
     set_task(VOTE_DURATION_SEC, "Task_EndMapVote", TASK_MAPVOTE_END)
 }
 
+// =====================================================
+// Menu handler (per selection)
+// =====================================================
 public MapVote_Handler(id, menu, item)
 {
     if (!g_VoteActive) return PLUGIN_HANDLED
 
     if (item == MENU_EXIT) return PLUGIN_HANDLED
 
-
+    // Get the map index from item info
     new info[8], name[64], access, callback
     menu_item_getinfo(menu, item, access, info, charsmax(info), name, charsmax(name), callback)
 
     new mapIdx = str_to_num(info)
     if (mapIdx < 0 || mapIdx >= g_AllMapCount) return PLUGIN_HANDLED
 
+    // Ignore duplicate votes from same user
     if (g_HasVoted[id]) return PLUGIN_HANDLED
     g_HasVoted[id] = true
     g_SelectedMapIdx[id] = mapIdx
 
- 
+    // Tally
     g_VoteCount[mapIdx]++
 
+    // Announce who voted for what
     client_print_color(0, print_team_default, "^4%s^1 ^3%n^1 voted for ^4%s", g_ChatPrefix, id, g_AllMaps[mapIdx])
 
     return PLUGIN_HANDLED
 }
 
+// =====================================================
+// Voting stops after 8 seconds (or earlier if you call this)
+// =====================================================
 public Task_EndMapVote()
 {
     if (!g_VoteActive) return
     g_VoteActive = false
 
+    // Close the menu handle (we don’t need it anymore)
     if (g_VoteMenu != INVALID_HANDLE)
     {
         menu_destroy(g_VoteMenu)
         g_VoteMenu = INVALID_HANDLE
     }
 
+    // Decide winner
     DecideWinnerMap(g_WinnerMap, charsmax(g_WinnerMap))
 
+    // Follow-up per phase
     if (g_CurrentVotePhase == VP_FULL)
     {
         new cur[64]
@@ -655,7 +720,7 @@ public Task_EndMapVote()
 
         if (equali(g_WinnerMap, cur))
         {
-
+            // Majority wants current map (extend)
             client_print_color(0, print_team_default,
                 "^4%s^1 Majority has decided to ^3play on the current map^1.", g_ChatPrefix)
             // DHUD + countdown 10s: "Captain selection will begin in X seconds"
@@ -685,12 +750,14 @@ public Task_EndMapVote()
         g_SHRemain = 6
         if (task_exists(TASK_SH_COUNTDOWN)) remove_task(TASK_SH_COUNTDOWN)
         set_task(1.0, "Task_ShowSecondHalfChangeCountdown", TASK_SH_COUNTDOWN, _, _, "b")
-
+        // Also schedule actual change
         set_task(CHANGE_DELAY_SH_SEC, "Task_PerformChangelevel", TASK_CHANGE_MAP)
     }
 }
 
+// =====================================================
 // Countdown HUDs
+// =====================================================
 stock StartCountdownHUD(seconds, CountdownType:type)
 {
     g_CountdownRemain = seconds
@@ -712,6 +779,7 @@ public Task_CountdownHUD()
         return
     }
 
+    // Format per type
     if (g_CountdownType == CT_CAPTAINS)
     {
         set_dhudmessage(0, 255, 128, -1.0, 0.08, 0, 0.0, HUD_COUNTDOWN_INTERVAL + 0.1, 0.0, 0.0)
@@ -726,7 +794,7 @@ public Task_CountdownHUD()
     g_CountdownRemain--
 }
 
-// Special 6-second HUD for Second Half before changing
+// Special 6-second HUD for Second Half before changing (kept separate for clarity)
 public Task_ShowSecondHalfChangeCountdown()
 {
     if (g_SHRemain <= 0)
@@ -742,18 +810,28 @@ public Task_ShowSecondHalfChangeCountdown()
     g_SHRemain--
 }
 
+// =====================================================
+// Final actions
+// =====================================================
 public Task_PerformChangelevel()
 {
+    // mark that we're changing so the next map boot knows
     set_map_flag_changed()
 
+    // fire the change
     server_cmd("changelevel %s", g_WinnerMap)
 }
 
 public Task_StartCaptains()
 {
+    // Transition your state and call the captains feature
+    // g_MatchStatus = MS_CAPTAINKNIFE; // or MS_TEAMSELECTION depending on your flow
     BeginCaptainSelection();
 }
 
+// =====================================================
+// Internals: load maps.ini and build options
+// =====================================================
 stock bool:LoadMapsIni()
 {
     g_AllMapCount = 0
@@ -776,11 +854,12 @@ stock bool:LoadMapsIni()
 
         if (!line[0])           continue
         if (line[0] == ';')     continue
-        if (line[0] == '/')     
+        if (line[0] == '/')     // support // comments
         {
             if (line[1] == '/') continue
         }
 
+        // keep only name-like chars
         if (!isalpha(line[0]) && line[0] != 'd' && line[0] != 'a' && line[0] != 'c')
             continue
 
@@ -791,6 +870,7 @@ stock bool:LoadMapsIni()
     return g_AllMapCount > 0
 }
 
+// Build the menu option list per phase rules
 stock BuildMenuOptions()
 {
     g_OptionCount = 0
@@ -800,17 +880,23 @@ stock BuildMenuOptions()
 
     if (g_CurrentVotePhase == VP_FULL)
     {
+        // 1) Current map as first option (Extend)
+        //    Even if not in maps.ini, we add it.
+        //    Record/find index for current map in AllMaps; if not found, push.
         new idx = FindOrAddMap(cur)
         g_OptionMapIndex[g_OptionCount++] = idx
 
+        // 2) Then all others (from maps.ini)
         for (new i = 0; i < g_AllMapCount; i++)
         {
+            // Skip duplicate of current (avoid double entry)
             if (equali(g_AllMaps[i], cur)) continue
             g_OptionMapIndex[g_OptionCount++] = i
         }
     }
-    else
+    else // VP_SECONDHALF
     {
+        // Exclude current map entirely
         for (new i = 0; i < g_AllMapCount; i++)
         {
             if (equali(g_AllMaps[i], cur)) continue
@@ -843,14 +929,17 @@ stock FindOrAddMap(const name[])
         copy(g_AllMaps[g_AllMapCount], MAX_NAME-1, name)
         return g_AllMapCount++
     }
+    // fallback: if overflow, reuse 0 (should not happen with sane lists)
     return 0
 }
 
+// Decide winner, break ties randomly; if no votes at all, pick random option
 stock DecideWinnerMap(outName[], outLen)
 {
     new bestVotes = -1
     new winners[MAX_MAPS], wCount = 0
 
+    // Tally only among options presented (g_OptionMapIndex list)
     for (new i = 0; i < g_OptionCount; i++)
     {
         new mapIdx = g_OptionMapIndex[i]
@@ -871,6 +960,7 @@ stock DecideWinnerMap(outName[], outLen)
     new finalIdx
     if (bestVotes <= 0)
     {
+        // No one voted OR all zero → random among all options
         finalIdx = g_OptionMapIndex[random(g_OptionCount)]
     }
     else if (wCount == 1)
@@ -879,6 +969,7 @@ stock DecideWinnerMap(outName[], outLen)
     }
     else
     {
+        // Tie → pick randomly among tied
         finalIdx = winners[random(wCount)]
     }
 
@@ -888,10 +979,11 @@ stock DecideWinnerMap(outName[], outLen)
 public BeginCaptainSelection()
 {
     g_SideChosen = false;
+    // 1) Sound + move ALL players to Spectator + chat announce
     client_cmd(0, "spk ^"%s^"", SND_PHASE_BEEP)
 
     new players[32], pnum;
-    get_players(players, pnum, "ch");
+    get_players(players, pnum, "ch"); // humans only (no bots/HLTV)
 
     for (new i = 0; i < pnum; i++)
     {
@@ -909,10 +1001,10 @@ public BeginCaptainSelection()
     client_print_color(0, print_team_default,
         "^4%s^1 Captain selection is starting. Everyone moved to ^3Spectators^1.", g_ChatPrefix)
 
-    // Lock joins from now until match end
+    // 2) Lock joins from now until match end
     g_JoinLocked = true
 
-    // Calm 3s DHUD countdown before picking captains
+    // 3) Calm 3s DHUD countdown before picking captains
     g_CapCountdownRemain = CAPTAIN_SELECT_COUNTDOWN
     if (task_exists(TASK_CAP_PICK_COUNTDOWN)) remove_task(TASK_CAP_PICK_COUNTDOWN)
     set_task(1.0, "Task_CaptainSelectCountdown", TASK_CAP_PICK_COUNTDOWN, _, _, "b")
@@ -922,10 +1014,11 @@ public MakeFreeLook(id)
 {
     if (!is_user_connected(id)) return;
 
+    // Force roaming observer (free look)
     set_pev(id, pev_iuser1, OBS_ROAMING); // 3
     set_pev(id, pev_iuser2, 0);
     set_pev(id, pev_iuser3, 0);
-    engclient_cmd(id, "specmode", "3");
+    engclient_cmd(id, "specmode", "3"); // keep client UI in sync with roaming
 }
 
 public Task_CaptainSelectCountdown()
@@ -945,7 +1038,7 @@ public Task_CaptainSelectCountdown()
 stock PickRandomCaptainsOrRetry()
 {
     new specs[32], scount
-    get_players(specs, scount, "ch")
+    get_players(specs, scount, "ch") // humans (skip bots/HLTV)
     // keep only spectators
     new pool[32], pnum = 0
     for (new i = 0; i < scount; i++)
@@ -988,7 +1081,7 @@ stock PickRandomCaptainsOrRetry()
     client_print_color(0, print_team_default,
         "^4%s^1 Captains selected: ^3%n^1 and ^3%n^1.", g_ChatPrefix, g_CaptainPlayer[CAP_A], g_CaptainPlayer[CAP_B])
 
-    // Small pause 
+    // Small pause → restart round to spawn them
     if (task_exists(TASK_ROUND_RESTART)) remove_task(TASK_ROUND_RESTART)
     set_task(RESTART_DELAY_SEC, "Task_DoRestart", TASK_ROUND_RESTART)
 
@@ -1000,6 +1093,9 @@ stock AssignCaptain(CaptainSlot:slot, id, CsTeams:team)
     g_CaptainPlayer[slot] = id
     g_CaptainTeam[slot]   = team
     cs_set_user_team(id, team)
+
+    // Save immediately in case we need to reassign later
+    // (roles persist even if player disconnects).
 }
 
 // sv_restart and enter the KNIFE phase
@@ -1010,12 +1106,16 @@ public Task_DoRestart()
 
     MarkGameDescDirty(true)
 
+    // Announce start of knife round
     set_dhudmessage(0, 255, 128, -1.0, 0.08, 0, 0.0, 3.0, 0.0, 0.0)
     show_dhudmessage(0, "Knife round for SIDE selection — GO!")
     client_print_color(0, print_team_default,
         "^4%s^1 Knife round started. Captains fight to choose side!", g_ChatPrefix)
 }
 
+// =====================================================
+// ENFORCE KNIFE-ONLY FOR CAPTAINS DURING KNIFE/TEAMSELECTION
+// =====================================================
 public OnPlayerSpawnPost(id)
 {
     if (!is_user_alive(id)) return
@@ -1031,6 +1131,7 @@ public OnPlayerSpawnPost(id)
 
     if (g_MatchStatus == MS_TEAMSELECTION)
     {
+        // Keep them dead-silent until teams finalized
         user_silentkill(id)
         return;
     }
@@ -1059,6 +1160,9 @@ public Cmd_BlockJoinTeam(id)
     return PLUGIN_HANDLED
 }
 
+// =====================================================
+// KNIFE RESULT → WINNER GETS SIDE MENU AFTER 4s
+// =====================================================
 public ev_DeathMsg()
 {
     new killer = read_data(1)
@@ -1068,9 +1172,11 @@ public ev_DeathMsg()
 
     if (g_StatsEnabled && !g_StatsLocked)
     {
+        // cache names (in case they disconnect later)
         if (is_user_connected(killer)) get_user_name(killer, g_NameCache[killer], charsmax(g_NameCache[]));
         if (is_user_connected(victim)) get_user_name(victim, g_NameCache[victim], charsmax(g_NameCache[]));
 
+        // Self kills / world kills ignored for killer stats
         if (killer && killer != victim && is_user_connected(killer))
         {
             g_Kills[killer]++;
@@ -1092,6 +1198,7 @@ public ev_DeathMsg()
 
     if (!equali(weapon, "knife")) return // only knife decides
 
+    // Check if it was Captain vs Captain
     if (IsCaptain(killer) && IsCaptain(victim))
     {
         g_WinnerCapSlot = (g_CaptainPlayer[CAP_A] == killer) ? CAP_A : CAP_B
@@ -1103,16 +1210,21 @@ public ev_DeathMsg()
         client_print_color(0, print_team_default,
             "^4%s^1 ^3%n^1 wins the knife round!", g_ChatPrefix, killer)
 
+        // Move to Team Selection phase (side choice first)
         g_MatchStatus = MS_TEAMSELECTION
-        g_SideChosen = false; 
+        g_SideChosen = false; // ensure false until menu selection completes
 
          MarkGameDescDirty(true)
 
+        // After 4 seconds, show side menu to the winner
         if (task_exists(TASK_SIDE_MENU)) remove_task(TASK_SIDE_MENU)
         set_task(SIDE_MENU_DELAY_SEC, "Task_ShowSideMenu", TASK_SIDE_MENU)
     }
 }
 
+// =====================================================
+// SIDE CHOICE MENU (Winner chooses T or CT)
+// =====================================================
 public Task_ShowSideMenu()
 {
     if (g_WinnerCapSlot != CAP_A && g_WinnerCapSlot != CAP_B)
@@ -1146,9 +1258,10 @@ public SideMenu_Handler(id, menu, item)
     new CsTeams:curTeam = cs_get_user_team(winnerId);
     if (curTeam == desired)
     {
+        // already on chosen side
         client_print_color(0, print_team_default,
             "^4%s^1 ^3%n^1 chose to stay on ^3%s^1.", g_ChatPrefix, winnerId, (desired == CS_TEAM_T ? "T" : "CT"));
-
+        // proceed to team selection in 4s
         g_SideChosen = true; // side locked
         if (task_exists(TASK_TEAMSEL_START)) remove_task(TASK_TEAMSEL_START);
         set_task(TEAMSEL_AFTER_SIDE_SEC, "Task_BeginTeamSelection", TASK_TEAMSEL_START);
@@ -1172,20 +1285,24 @@ public SideMenu_Handler(id, menu, item)
 
 stock SwapCaptainSides(CsTeams:winnerDesired)
 {
+    // Figure other slot
     new CaptainSlot:otherSlot = (g_WinnerCapSlot == CAP_A) ? CAP_B : CAP_A;
 
     new winId = g_CaptainPlayer[g_WinnerCapSlot];
     new loseId = g_CaptainPlayer[otherSlot];
 
+    // Put winner to desired team; loser to opposite
     new CsTeams:loserTeam = (winnerDesired == CS_TEAM_T) ? CS_TEAM_CT : CS_TEAM_T;
 
     cs_set_user_team(winId, winnerDesired);
     cs_set_user_team(loseId, loserTeam);
 
+    // Update roles' recorded teams
     g_CaptainTeam[g_WinnerCapSlot] = winnerDesired;
     g_CaptainTeam[otherSlot]       = loserTeam;
 }
 
+// Picks a Spectator and assigns to the given captain role’s team
 stock bool:ReassignCaptain(CaptainSlot:slot)
 {
     new specs[32], scount
@@ -1207,7 +1324,9 @@ stock bool:ReassignCaptain(CaptainSlot:slot)
     return true
 }
 
-// Helpers
+// =====================================================
+// HELPERS
+// =====================================================
 stock bool:IsCaptain(id)
 {
     return (id == g_CaptainPlayer[CAP_A] || id == g_CaptainPlayer[CAP_B])
@@ -1222,21 +1341,29 @@ stock GetCaptainSlot(id)
 
 public Task_BeginTeamSelection()
 {
-    if (!g_SideChosen) return; 
+    if (!g_SideChosen) return; // guard: do NOT start until side is chosen
 
+    // Calm reset & silence
     server_cmd("sv_restart 1");
 
+    // Force everyone dead during team selection (no noise)
     ForceAllDead();
 
+    // Start the persistent two-column HUD
     if (task_exists(TASK_TEAMSEL_HUD)) remove_task(TASK_TEAMSEL_HUD);
     set_task(1.0, "Task_DrawTeamSelHUD", TASK_TEAMSEL_HUD, _, _, "b");
 
+    // Winner captain picks first
     g_CurrentPickerSlot = g_WinnerCapSlot;
 
+    // After 2 seconds, give first pick menu
     if (task_exists(TASK_TEAMSEL_GIVE_MENU)) remove_task(TASK_TEAMSEL_GIVE_MENU);
     set_task(TEAMSEL_MENU_DELAY, "Task_GivePickMenu", TASK_TEAMSEL_GIVE_MENU);
 }
 
+// -------------------------------------------------------------------
+// Persistent two-column HUD (refreshing)
+// -------------------------------------------------------------------
 public Task_DrawTeamSelHUD()
 {
     if (g_MatchStatus != MS_TEAMSELECTION)
@@ -1250,18 +1377,18 @@ public Task_DrawTeamSelHUD()
 
     // Left column (T or CT depending on captain’s team)
     set_hudmessage(
-        255, 64, 64,   
-        0.20, 0.25,    
-        0,             
-        6.0, 6.0,      
-        0.1, 0.1       
+        255, 64, 64,   // red-ish color
+        0.20, 0.25,    // x, y
+        0,             // effects (0 = none, 1 = fade in/out, 2 = flash)
+        6.0, 6.0,      // fxtime, holdtime
+        0.1, 0.1       // fadein, fadeout
     );
     show_hudmessage(0, "%s", left);
 
     // Right column (blue for CT captain name line)
     set_hudmessage(
-        64, 128, 255,  
-        0.60, 0.25,   
+        64, 128, 255,  // blue-ish color
+        0.60, 0.25,    // x, y
         0,
         6.0, 6.0,
         0.1, 0.1
@@ -1272,6 +1399,7 @@ public Task_DrawTeamSelHUD()
 
 stock BuildTeamSelColumns(left[], llen, right[], rlen)
 {
+    // Determine which captain is on which side to label columns
     new capT = -1, capCT = -1;
     if (g_CaptainTeam[CAP_A] == CS_TEAM_T) capT = g_CaptainPlayer[CAP_A];
     if (g_CaptainTeam[CAP_A] == CS_TEAM_CT) capCT = g_CaptainPlayer[CAP_A];
@@ -1282,6 +1410,7 @@ stock BuildTeamSelColumns(left[], llen, right[], rlen)
     if (capT > 0) get_user_name(capT, capTName, charsmax(capTName)); else copy(capTName, charsmax(capTName), "T Captain");
     if (capCT > 0) get_user_name(capCT, capCTName, charsmax(capCTName)); else copy(capCTName, charsmax(capCTName), "CT Captain");
 
+    // Build roster lines (players white)
     new tRoster[384]; BuildRosterForTeam(CS_TEAM_T, tRoster, charsmax(tRoster), capT);
     new ctRoster[384]; BuildRosterForTeam(CS_TEAM_CT, ctRoster, charsmax(ctRoster), capCT);
 
@@ -1299,7 +1428,7 @@ stock BuildRosterForTeam(CsTeams:team, out[], outlen, capId)
     {
         new id = players[i];
         if (cs_get_user_team(id) != team) continue;
-        if (id == capId) continue; 
+        if (id == capId) continue; // skip captain, shown in header
 
         new name[32]; get_user_name(id, name, charsmax(name));
         formatex(line, charsmax(line), "%s^n", name);
@@ -1307,14 +1436,18 @@ stock BuildRosterForTeam(CsTeams:team, out[], outlen, capId)
     }
 }
 
+// -------------------------------------------------------------------
 // Give the pick menu to the captain whose turn it is
+// -------------------------------------------------------------------
 public Task_GivePickMenu()
 {
     if (g_MatchStatus != MS_TEAMSELECTION) return;
 
+    // Recompute spectator list using the authoritative helper
     new specs[32], scount;
     GetHumanSpecList(specs, scount);
 
+    // If there truly are no specs left, finish teams.
     if (scount <= 0)
     {
         FinishTeamsAndStart();
@@ -1325,10 +1458,13 @@ public Task_GivePickMenu()
 
     if (!is_user_connected(picker))
     {
+        // Captain missing (probably a fast DC) — let disconnect logic reassign,
+        // then retry in 5s automatically if it’s still this slot’s turn.
         set_task(4.0, "Task_GivePickMenu", TASK_TEAMSEL_GIVE_MENU);
         return;
     }
 
+    // Build/Show menu (spectators only)
     if (g_PickMenu != INVALID_HANDLE) menu_destroy(g_PickMenu);
     g_PickMenu = menu_create("Pick your teammate", "PickMenu_Handler");
 
@@ -1347,11 +1483,13 @@ public Task_GivePickMenu()
     menu_display(picker, g_PickMenu, 0);
 }
 
+// Captain’s pick handler
 public PickMenu_Handler(id, menu, item)
 {
     if (menu != g_PickMenu) { if (menu != INVALID_HANDLE) menu_destroy(menu); return PLUGIN_HANDLED; }
     if (item == MENU_EXIT)  { menu_destroy(g_PickMenu); g_PickMenu = INVALID_HANDLE; g_PickInProgress = false; return PLUGIN_HANDLED; }
 
+    // Ensure the player picking is the *current* picker
     if (id != g_CaptainPlayer[g_CurrentPickerSlot])
     {
         // Not your turn
@@ -1367,10 +1505,12 @@ public PickMenu_Handler(id, menu, item)
     new pickId = str_to_num(info);
     if (!is_user_connected(pickId) || cs_get_user_team(pickId) != CS_TEAM_SPECTATOR)
     {
+        // Target invalid (left or moved) — try again quickly
         set_task(0.8, "Task_GivePickMenu", TASK_TEAMSEL_GIVE_MENU);
         return PLUGIN_HANDLED;
     }
 
+    // Move the picked player to the picker’s team and keep him dead
     cs_set_user_team(pickId, g_CaptainTeam[g_CurrentPickerSlot]);
     if (is_user_alive(pickId)) user_kill(pickId, 1);
 
@@ -1385,6 +1525,7 @@ public PickMenu_Handler(id, menu, item)
         return PLUGIN_HANDLED;
     }
 
+    // Decide who picks next (gap rule), then schedule next captain menu in 2s
     g_CurrentPickerSlot = DecideNextPicker(g_CurrentPickerSlot);
 
     if (task_exists(TASK_TEAMSEL_GIVE_MENU)) remove_task(TASK_TEAMSEL_GIVE_MENU);
@@ -1393,15 +1534,21 @@ public PickMenu_Handler(id, menu, item)
     return PLUGIN_HANDLED;
 }
 
+// -------------------------------------------------------------------
+// Decide whose turn is next with the “gap ≤ 1” rule
+// -------------------------------------------------------------------
 stock CaptainSlot:DecideNextPicker(CaptainSlot:lastPicker)
 {
+    // Count NON-captain players on each captain’s team
     new aTeam = g_CaptainTeam[CAP_A], bTeam = g_CaptainTeam[CAP_B];
     new aCnt = CountNonCaptainPlayers(aTeam, g_CaptainPlayer[CAP_A]);
     new bCnt = CountNonCaptainPlayers(bTeam, g_CaptainPlayer[CAP_B]);
 
+    // If a gap > 1 exists, the team with FEWER players keeps picking
     if (aCnt - bCnt > 1) return CAP_B;
     if (bCnt - aCnt > 1) return CAP_A;
 
+    // Otherwise alternate
     return (lastPicker == CAP_A) ? CAP_B : CAP_A;
 }
 
@@ -1428,6 +1575,7 @@ stock CountHumanSpecs()
 stock GetHumanSpecList(out[], &count)
 {
     new p[32], n;
+    // use "c" (connected) to get players actually present on the server
     get_players(p, n, "c");
 
     count = 0;
@@ -1435,10 +1583,11 @@ stock GetHumanSpecList(out[], &count)
     {
         new id = p[i];
 
+        // skip obviously invalid players
         if (!is_user_connected(id)) continue;
 
         #if defined PLUGIN_has_is_user_bot
-        if (is_user_bot(id)) continue; 
+        if (is_user_bot(id)) continue; // skip bots unless you want them as picks
         #endif
 
         new team = cs_get_user_team(id);
@@ -1459,43 +1608,54 @@ stock ForceAllDead()
     }
 }
 
+// -------------------------------------------------------------------
+// Finish: shine HUD 2s, restart, show “begin now”, then FirstHalfInitial()
+// -------------------------------------------------------------------
 stock FinishTeamsAndStart()
 {
+    // Keep HUD shining for 2s (we just let the HUD task keep running)
     set_task(TEAMSEL_FINISH_SHINE, "Task_AfterShine", TASK_TEAMSEL_FINALIZE);
 }
 
 public Task_AfterShine()
 {
-
+    // Stop HUD and begin the match flow
     if (task_exists(TASK_TEAMSEL_HUD)) remove_task(TASK_TEAMSEL_HUD);
 
     server_cmd("sv_restart 1");
 
+    // Little banner
     set_dhudmessage(0, 255, 128, -1.0, 0.10, 0, 0.0, 2.5, 0.0, 0.0);
     show_dhudmessage(0, "All teams set, match will begin now");
 
+    // Hand-off to first-half initialization after 3s
     if (task_exists(TASK_FIRSTHALF_INIT)) remove_task(TASK_FIRSTHALF_INIT);
     set_task(3.0, "FirstHalfInitial", TASK_FIRSTHALF_INIT);
 
 }
 
+// Placeholder — you’ll implement the first-half setup next
 public FirstHalfInitial()
 {
     g_MatchStatus  = MS_FIRSTHALFINITIAL;
 
     MarkGameDescDirty(true)
+    // Exec competitive cfg
     server_cmd("exec %s", gCvarExecAutomix);
     ApplyHalfTagsForAll();
 
     // Reset state for first half
-    g_ScoreLocked   = true;   // lock 
+    g_ScoreLocked   = true;   // lock until the first round formally ends
     g_HalfRound     = 0;
     g_TotalRounds   = 0;
     g_TeamA_CS      = CS_TEAM_T;
     g_TeamB_CS      = CS_TEAM_CT;
 
+    // Cool pre-start effects & restarts
     FirstHalf_IntroEffects();
 
+    // After effects/runups, we flip to live first half
+    // Schedule start ~3.7s later (3 quick beats + restart cadence)
     set_task(3.7, "FirstHalf_GoLive");
 }
 
@@ -1505,6 +1665,7 @@ public Cmd_GetMenu(id)
 
     if (id == g_CaptainPlayer[g_CurrentPickerSlot])
     {
+        // Re-issue current pick menu (if it’s this captain’s turn)
         if (task_exists(TASK_TEAMSEL_GIVE_MENU)) remove_task(TASK_TEAMSEL_GIVE_MENU);
         set_task(0.2, "Task_GivePickMenu", TASK_TEAMSEL_GIVE_MENU);
     }
@@ -1516,14 +1677,17 @@ public Cmd_GetMenu(id)
     return PLUGIN_HANDLED;
 }
 
-
-// FIRST HALF 
+// ==========================================================================
+// FIRST HALF — Intro effects, GoLive, Round start/end handling
+// ==========================================================================
 stock FirstHalf_IntroEffects()
 {
+    // Fun little scrolling/step banner (three frames)
     FirstHalf_BannerStep(0, "First half is about to start");
     FirstHalf_BannerStep(1, "First half is about to start");
     FirstHalf_BannerStep(2, "First half is about to start");
 
+    // A couple light restarts with beeps
     set_task(0.2, "FX_Beep", TASK_FH_EFFECTS_BASE+1);
     set_task(0.3, "FX_Restart", TASK_FH_EFFECTS_BASE+2); // sv_restart 1
     set_task(1.6, "FX_Beep", TASK_FH_EFFECTS_BASE+3);
@@ -1532,12 +1696,17 @@ stock FirstHalf_IntroEffects()
 
 stock FirstHalf_BannerStep(step, const text[])
 {
+    // step 0..2 → y position slightly lowers to create a simple "scroll in"
     new Float:y = 0.10 + floatmul(float(step), 0.05);
     set_task(floatmul(float(step), 0.3), "Task_ShowBannerFH", TASK_FH_EFFECTS_BASE+10+step, text, strlen(text)+1);
+
+    // store y into a global? Simpler: re-calc inside task with a static mapping; see below
 }
 
 public Task_ShowBannerFH(const text[])
 {
+    // We'll re-use the same y for a pleasant effect each call
+    // (calls were spaced 0.0/0.3/0.6s apart)
     static callCount = 0;
     new Float:y = 0.10 + floatmul(float(callCount), 0.05);
     if (callCount >= 2) callCount = 0; else callCount++;
@@ -1553,18 +1722,19 @@ public FirstHalf_GoLive()
 {
 
     g_MatchStatus  = MS_FIRSTHALF;
-    g_ScoreLocked = false; 
+    g_ScoreLocked = false; // unlock at first round end
     Stats_BeginFirstHalf()
     MarkGameDescDirty(true)
-
+    // Live spam!
     client_print_color(0, print_team_default, "^4%s^1 It's ^3LIVE LIVE LIVE^1 — ^3GOGOGOGOGO^1!", g_ChatPrefix);
 
     // First round index
     g_HalfRound   = 1;
     g_TotalRounds = 1;
 
-
+    // Show round-start scoreboard HUD for 4 seconds
     ShowRoundStartHUD();
+
     StartLiveScroll(4.0)
 }
 
@@ -1580,6 +1750,7 @@ public EV_RoundStart()
     {
         if (g_HalfRound < 15)
         {
+            // When not first kick-off (already set to 1 on GoLive)
             if (g_TotalRounds > 0) { g_HalfRound++; g_TotalRounds++; }
         }
         // Last-round warning for first half
@@ -1608,8 +1779,10 @@ public EV_RoundStart()
     // Round-start scoreboard
     ShowRoundStartHUD();
 
+    // Also show “who’s leading”
     AnnounceLeaderChat();
 
+    //Show round number
     ShowRoundNumberHUD();
 }
 
@@ -1628,11 +1801,12 @@ public EV_CtWin()
 stock OnRoundWinner(CsTeams:winnerCS)
 {
     
-    if (g_ScoreLocked) return; 
+    if (g_ScoreLocked) return; // already counted this round
     if (g_MatchStatus != MS_FIRSTHALF && g_MatchStatus != MS_SECONDHALF) return;
 
     MarkGameDescDirty(true)
 
+    // Attribute to Team A or Team B based on current mapping
     if (winnerCS == g_TeamA_CS) g_ScoreA++;
     else if (winnerCS == g_TeamB_CS) g_ScoreB++;
 
@@ -1640,6 +1814,7 @@ stock OnRoundWinner(CsTeams:winnerCS)
 
     MarkGameDescDirty(true)
 
+    // Check win conditions / halftime cutoffs
     if (g_MatchStatus == MS_FIRSTHALF && g_HalfRound >= 15)
     {
         // lock & go halftime
@@ -1650,13 +1825,15 @@ stock OnRoundWinner(CsTeams:winnerCS)
 
     if (g_MatchStatus == MS_SECONDHALF)
     {
+        // Early finish if somebody reaches 16
         if (g_ScoreA >= 16 || g_ScoreB >= 16)
         {
             EndMatchDeclareWinner();
             return;
         }
 
-        if ((g_ScoreA + g_ScoreB) >= 30)
+        // Or end after 30 rounds
+        if ((g_ScoreA + g_ScoreB) >= 30) // same as g_TotalRounds >= 30
         {
             EndMatchDeclareWinner();
             return;
@@ -1664,16 +1841,20 @@ stock OnRoundWinner(CsTeams:winnerCS)
     }
 }
 
+// HUD for each round start (4 seconds) + chat score line + needs-to-win (2nd half)
 stock ShowRoundStartHUD()
 {
+    // Compose “Team [A] - XX || Team [B] - XX”
     new line[96];
     formatex(line, charsmax(line), "Team [A] - %02d  ||  Team [B] - %02d", g_ScoreA, g_ScoreB);
 
     set_dhudmessage(200, 230, 255, -1.0, 0.11, 0, 0.0, 4.0, 0.0, 0.0);
     show_dhudmessage(0, line);
 
+    // Chat text1
     client_print_color(0, print_team_default, "^4%s^1 Team ^3[A]^1 - ^3%02d^1  ||  Team ^3[B]^1 - ^3%02d^1.", g_ChatPrefix, g_ScoreA, g_ScoreB);
 
+    // In second half, add “needs n to win/comeback”
     if (g_MatchStatus == MS_SECONDHALF)
     {
         new needA = 16 - g_ScoreA;
@@ -1698,8 +1879,9 @@ stock AnnounceLeaderChat()
         client_print_color(0, print_team_default, "^4%s^1 Scores are tied.", g_ChatPrefix);
 }
 
-
-// HALFTIME SWAP
+// ==========================================================================
+// HALFTIME SWAP → SECOND HALF INIT
+// ==========================================================================
 stock BeginHalftimeSwap()
 {
     if (g_MatchStatus != MS_FIRSTHALF) return;
@@ -1710,15 +1892,19 @@ stock BeginHalftimeSwap()
 
     MarkGameDescDirty(true)
 
+    // Lock counting; announce swap
     client_print_color(0, print_team_default, "^4%s^1 First half is over. Swapping teams for second half...", g_ChatPrefix);
     set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 5.0, 0.0, 0.0);
     show_dhudmessage(0, "First half is over^nSwapping teams for second half...");
 
+    // Swap all players’ CS sides
     SwapAllPlayersTeams();
 
+    // Team tags are team-specific: after swap, A=CT, B=T
     g_TeamA_CS = CS_TEAM_CT;
     g_TeamB_CS = CS_TEAM_T;
 
+    // Small delay, then start second-half init (with cool restarts + “waiting for players” gate)
     set_task(2.0, "Task_SecondHalfInit");
 }
 
@@ -1726,24 +1912,29 @@ public Task_SecondHalfInit()
 {
     g_MatchStatus  = MS_SECONDHALFINITIAL;
     
-    g_HalfRound   = 0;        
+    g_HalfRound   = 0;         // reset half-round counter
+    // TotalRounds continues from 15 -> will increment on round starts again
 
     MarkGameDescDirty(true)
 
+    // Cool restarts & effects
     SecondHalf_IntroEffects();
 
     ApplyHalfTagsForAll();
 
+    // Wait until players meet min before going live
     remove_task(TASK_WAIT_2NDHALF);
     set_task(1.0, "SecondHalf_WaitForPlayers", TASK_WAIT_2NDHALF, "", 0, "b");
 }
 
 stock SecondHalf_IntroEffects()
 {
+    // Three quick banners
     SecondHalf_BannerStep(0, "Second half starting soon");
     SecondHalf_BannerStep(1, "Second half starting soon");
     SecondHalf_BannerStep(2, "Second half starting soon");
 
+    // restarts
     set_task(0.2, "FX_Beep", TASK_SH_EFFECTS_BASE+1);
     set_task(0.3, "FX_Restart", TASK_SH_EFFECTS_BASE+2);
     set_task(1.6, "FX_Beep", TASK_SH_EFFECTS_BASE+3);
@@ -1772,6 +1963,7 @@ public SecondHalf_WaitForPlayers()
     new need = get_pcvar_num(g_pCvarMinPlayers);
     if (need < 0) need = 0;
 
+    // Count current humans on T/CT (exclude spec/hltv/bots)
     new players[32], pnum, humans = 0;
     get_players(players, pnum, "bch");
     for (new i = 0; i < pnum; i++)
@@ -1782,11 +1974,13 @@ public SecondHalf_WaitForPlayers()
 
     if (humans >= need && need > 0)
     {
+        // Good to go
         remove_task(TASK_WAIT_2NDHALF);
         SecondHalf_GoLive();
         return;
     }
 
+    // Show waiting HUD
     new diff = (need > humans) ? (need - humans) : 0;
     new msg[96];
     formatex(msg, charsmax(msg), "Waiting for %d player%s before starting second half", diff, (diff == 1 ? "" : "s"));
@@ -1799,7 +1993,7 @@ stock SecondHalf_GoLive()
     if (g_MatchStatus != MS_SECONDHALFINITIAL) return;
 
     g_MatchStatus  = MS_SECONDHALF;
-    g_ScoreLocked = false;  
+    g_ScoreLocked = false;   // unlock when a winner is detected in round end
     g_HalfRound   = 1;
     g_TotalRounds = 16;
     Stats_UnlockSecondHalf()
@@ -1812,7 +2006,9 @@ stock SecondHalf_GoLive()
     StartLiveScroll(4.0)
 }
 
+// ==========================================================================
 // MATCH END
+// ==========================================================================
 stock EndMatchDeclareWinner()
 {
     // Figure winner/draw
@@ -1833,9 +2029,11 @@ stock EndMatchDeclareWinner()
         client_print_color(0, print_team_default, "^4%s^1 Match is a ^3DRAW^1 — ^3%02d^1-^3%02d^1.",g_ChatPrefix,  g_ScoreA, g_ScoreB);
     }
 
+    // 10 sec DHUD
     set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 10.0, 0.0, 0.0);
     show_dhudmessage(0, msg);
 
+    // Restart & exec pub cfg for post-game chat/view
     set_task(1.0, "FX_Restart");
     set_task(1.1, "FX_Beep");
     server_cmd("exec %s", gCvarExecPub);
@@ -1845,11 +2043,13 @@ stock EndMatchDeclareWinner()
     g_MatchEnded = true;
     MarkGameDescDirty(true);
 
+    // Hand off to stats module (to be created)
     set_task(1.0, "Task_ShowMatchStats");
 }
 
-
+// ==========================================================================
 // UTILITIES: swap, tags, reapply, etc.
+// ==========================================================================
 stock SwapAllPlayersTeams()
 {
     new players[32], pnum; get_players(players, pnum, "bch");
@@ -1877,6 +2077,7 @@ stock AutoAssignToSmallerTeam(id)
     else         cs_set_user_team(id, CS_TEAM_CT);
 }
 
+// Call this when your First Half actually begins (e.g., in FirstHalf_GoLive)
 stock Stats_BeginFirstHalf()
 {
     Stats_Reset();
@@ -1884,27 +2085,32 @@ stock Stats_BeginFirstHalf()
     g_StatsEnabled = true;
 }
 
+// Call this at the end of round 15 (just before halftime swap)
 stock Stats_LockAtHalftime()
 {
-    g_StatsLocked = true; 
+    g_StatsLocked = true; // freeze stats during halftime swap / waiting
 }
 
+// Call this when Second Half goes live
 stock Stats_UnlockSecondHalf()
 {
     if (!g_StatsEnabled) g_StatsEnabled = true;
     g_StatsLocked = false;
 }
 
+// After stats finish: start Next Map vote and reset stats
 public Task_StatsFlowDone()
 {
     StartMapVote()
     Stats_Reset();
 }
 
+// Bomb planted
 public LE_BombPlanted()
 {
     if (!g_StatsEnabled || g_StatsLocked) return;
 
+    // The logger doesn't directly give planter id; find T player planting:
     new planter = FindCurrentPlanter();
     if (planter > 0)
     {
@@ -1914,6 +2120,7 @@ public LE_BombPlanted()
     }
 }
 
+// Bomb exploded → attribute successful plant to last planter (if still valid)
 public LE_BombExploded()
 {
     if (!g_StatsEnabled || g_StatsLocked) return;
@@ -1922,19 +2129,24 @@ public LE_BombExploded()
     {
         g_SuccessPlants[g_LastPlanter]++;
     }
-    g_LastPlanter = 0;
+    g_LastPlanter = 0; // reset after explosion
 }
 
+// Bomb defused → clear last planter (no success credit)
 public LE_BombDefused()
 {
     g_LastPlanter = 0;
 }
 
-// STATS DISPLAY
+// ==========================================================================
+// STATS DISPLAY (2 pages, 5s each) — DHUD safe formatting
+// ==========================================================================
 public Task_ShowStatsPage1()
 {
+    // MVP = most kills; tie-break by HS, then least deaths
     new mvp = FindMVP();
 
+    // Leaders
     new mk = FindTopIndex(g_Kills);
     new mhs = FindTopIndex(g_HSKills);
 
@@ -1981,7 +2193,9 @@ public Task_ShowStatsPage2()
     show_hudmessage(0, line);
 }
 
+// ==========================================================================
 // HELPERS — winners, names, reset
+// ==========================================================================
 stock GetDisplayName(id, out[], len)
 {
     if (id > 0 && id <= MAX_PLAYERS)
@@ -2009,6 +2223,7 @@ stock FindBottomIndex(const arr[])
     new worst = 0, worstv = 99999, initialized = 0;
     for (new i = 1; i <= MAX_PLAYERS; i++)
     {
+        // consider only players who ever connected (non-zero name cache or any stat touched)
         if (!g_NameCache[i][0] && !arr[i] && !g_Deaths[i] && !g_HSKills[i]) continue;
 
         if (!initialized || arr[i] < worstv) { worstv = arr[i]; worst = i; initialized = 1; }
@@ -2023,6 +2238,7 @@ stock FindMVP()
 
     for (new i = 1; i <= MAX_PLAYERS; i++)
     {
+        // consider only known participants
         if (!g_NameCache[i][0] && !g_Kills[i] && !g_Deaths[i]) continue;
 
         if (g_Kills[i] > bestKills
@@ -2038,6 +2254,9 @@ stock FindMVP()
     return idx ? idx : FindTopIndex(g_Kills);
 }
 
+// Try to guess the planter when "Planted_The_Bomb" logevent fires.
+// We scan Ts for a player who is alive and currently holding c4 or recently used it.
+// (Lightweight heuristic; good enough in practice.)
 stock FindCurrentPlanter()
 {
     new players[32], pnum; get_players(players, pnum, "bch");
@@ -2048,12 +2267,14 @@ stock FindCurrentPlanter()
         new id = players[i];
         if (cs_get_user_team(id) != CS_TEAM_T) continue;
 
+        // If they have the C4 or are planting, prefer them
         if (user_has_weapon(id, CSW_C4)) {
             candidate = id;
             break;
         }
     }
 
+    // Fallback: first alive T
     if (!candidate)
     {
         for (new i = 0; i < pnum; i++)
@@ -2089,6 +2310,7 @@ stock Stats_Reset()
     MarkGameDescDirty(true);
 }
 
+// Keep name cache accurate even if they rename
 public FW_ClientUserInfoChanged(id, buffer)
 {
     if (!is_user_connected(id)) return FMRES_IGNORED;
@@ -2104,14 +2326,17 @@ public Task_ShowMatchStats()
 {
     g_StatsLocked = true;
 
+    // Show PAGE 1 now, page 2 after 5s, then proceed
     Task_ShowStatsPage1();
     set_task(5.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
     set_task(10.0, "Task_StatsFlowDone", TASK_STATS_DONE);
 }
 
+// ---- Request command ----
 public Cmd_SwapRequest(id) {
     if (!is_user_connected(id)) return PLUGIN_HANDLED;
 
+    // Check game status & round restriction
     if (!(g_MatchStatus == MS_FIRSTHALFINITIAL || 
          (g_MatchStatus == MS_FIRSTHALF && g_HalfRound < 2))) {
         client_print_color(id, print_team_default, "^4%s^1 Swap requests not allowed now.", g_ChatPrefix);
@@ -2135,12 +2360,12 @@ public Cmd_SwapRequest(id) {
     new menu = menu_create(title, "SwapMenu_Handler");
 
     new players[32], pnum;
-    get_players(players, pnum, "ch"); 
+    get_players(players, pnum, "ch"); // all humans
     for (new i=0; i<pnum; i++) {
         new pid = players[i];
         if (pid == id) continue;
         if (cs_get_user_team(pid) != CS_TEAM_T && cs_get_user_team(pid) != CS_TEAM_CT) continue;
-        if (cs_get_user_team(pid) == myTeam) continue; // same team 
+        if (cs_get_user_team(pid) == myTeam) continue; // same team → skip
 
         new name[32], info[8];
         get_user_name(pid, name, charsmax(name));
@@ -2159,6 +2384,7 @@ public Cmd_SwapRequest(id) {
     return PLUGIN_HANDLED;
 }
 
+// ---- Requester selects target ----
 public SwapMenu_Handler(id, menu, item) {
     if (item == MENU_EXIT || item == -1) return PLUGIN_HANDLED;
 
@@ -2171,9 +2397,11 @@ public SwapMenu_Handler(id, menu, item) {
         return PLUGIN_HANDLED;
     }
 
+    // Store pending
     g_SwapTarget[id]    = target;
     g_SwapPending[id]   = true;
 
+    // Show confirmation to target
     new reqName[32]; get_user_name(id, reqName, charsmax(reqName));
     new title[64]; formatex(title, charsmax(title), "Swap with %s?", reqName);
 
@@ -2181,14 +2409,15 @@ public SwapMenu_Handler(id, menu, item) {
     menu_additem(confMenu, "Yes, swap", "1");
     menu_additem(confMenu, "No, stay", "0");
 
-    menu_setprop(confMenu, MPROP_EXIT, MEXIT_NEVER); 
+    menu_setprop(confMenu, MPROP_EXIT, MEXIT_NEVER); // target cannot exit
     menu_display(target, confMenu);
 
     return PLUGIN_HANDLED;
 }
 
+// ---- Target responds ----
 public SwapConfirm_Handler(id, menu, item) {
-   
+    // Find who requested you
     new requester = 0;
     for (new i=1; i<=32; i++) {
         if (g_SwapTarget[i] == id && g_SwapPending[i]) {
@@ -2199,7 +2428,7 @@ public SwapConfirm_Handler(id, menu, item) {
     if (!requester) return PLUGIN_HANDLED;
 
     if (item == -1) {
-    
+        // re-show menu (cannot exit)
         SwapMenu_Redisplay(id, requester);
         return PLUGIN_HANDLED;
     }
@@ -2208,20 +2437,21 @@ public SwapConfirm_Handler(id, menu, item) {
     menu_item_getinfo(menu, item, access, info, charsmax(info), _, _, callback);
 
     if (equal(info, "1")) {
-    
+        // Accept swap
         DoSwapPlayers(requester, id);
     } else {
         client_print_color(requester, print_team_default, "^4%s^1 ^3%s^1 declined your swap request.", g_ChatPrefix, g_NameCache[id]);
         client_print_color(id, print_team_default, "^4%s^1 You declined the swap.",g_ChatPrefix);
     }
 
- 
+    // Clear pending
     g_SwapPending[requester] = false;
     g_SwapTarget[requester] = 0;
 
     return PLUGIN_HANDLED;
 }
 
+// ---- Force re-show if target tries to exit ----
 stock SwapMenu_Redisplay(target, requester) {
     if (!is_user_connected(target) || !is_user_connected(requester)) return;
 
@@ -2236,6 +2466,7 @@ stock SwapMenu_Redisplay(target, requester) {
     menu_display(target, confMenu);
 }
 
+// ---- Perform actual swap ----
 stock DoSwapPlayers(id1, id2) {
     if (!is_user_connected(id1) || !is_user_connected(id2)) return;
 
@@ -2247,6 +2478,8 @@ stock DoSwapPlayers(id1, id2) {
     cs_set_user_team(id1, t2);
     cs_set_user_team(id2, t1);
 
+    // Re-apply tags for both, after a short delay
+    // (0.2s is enough to avoid racing name/team updates)
     set_task(0.2, "Task_ApplyHalfTag", TASK_SWAP_BASE + id1);
     set_task(0.2, "Task_ApplyHalfTag", TASK_SWAP_BASE + id2);
 
@@ -2258,6 +2491,7 @@ stock DoSwapPlayers(id1, id2) {
     client_print_color(0, print_team_default, "^4%s^1 Using ^3/swap, you can swap teams with anyone before Round 2 ends", g_ChatPrefix);
 }
 
+// Helper: apply the correct tag to ONE user based on current half + their team
 stock ApplyHalfTagForUser(id)
 {
     if (!is_user_connected(id)) return;
@@ -2267,29 +2501,32 @@ stock ApplyHalfTagForUser(id)
 
     if (tm == CS_TEAM_T)
     {
+        // FIRST HALF: T => [A] | SECOND HALF: T => [B]
         StripThenSetTag(id, firstHalf ? TAG_A_STR : TAG_B_STR);
     }
     else if (tm == CS_TEAM_CT)
     {
+        // FIRST HALF: CT => [B] | SECOND HALF: CT => [A]
         StripThenSetTag(id, firstHalf ? TAG_B_STR : TAG_A_STR);
     }
     else
     {
+        // spec/unassigned — strip
         StripThenSetTag(id, "");
     }
 }
 
+// Tiny task wrapper so we can safely run after cs_set_user_team
 public Task_ApplyHalfTag(taskid)
 {
     new id = taskid - TASK_SWAP_BASE;
-    if (id < 1 || id > get_maxplayers()) return;
-    if (!is_user_connected(id)) return;
+    if (id < 1 || id > 32 || !is_user_connected(id)) return;
     ApplyHalfTagForUser(id);
 }
 
-
 stock ApplyHalfTagsForAll()
 {
+    // RUNTIME flag — must NOT be const
     new bool:firstHalf = (g_MatchStatus == MS_FIRSTHALF || g_MatchStatus == MS_FIRSTHALFINITIAL);
 
     new maxp = get_maxplayers();
@@ -2301,14 +2538,17 @@ stock ApplyHalfTagsForAll()
 
         if (tm == CS_TEAM_T)
         {
+            // FIRST HALF:  T => [A]   | SECOND HALF: T => [B]
             StripThenSetTag(id, firstHalf ? TAG_A_STR : TAG_B_STR);
         }
         else if (tm == CS_TEAM_CT)
         {
+            // FIRST HALF:  CT => [B]  | SECOND HALF: CT => [A]
             StripThenSetTag(id, firstHalf ? TAG_B_STR : TAG_A_STR);
         }
         else
         {
+            // Spectator / unassigned — just strip tags
             StripThenSetTag(id, "");
         }
     }
@@ -2338,14 +2578,17 @@ public Task_AttemptJoinTag(taskid)
 
     if (g_MatchStatus == MS_FIRSTHALFINITIAL || g_MatchStatus == MS_FIRSTHALF)
     {
+        // FIRST HALF: T => [A], CT => [B]
         StripThenSetTag(id, (tm == CS_TEAM_T) ? TAG_A_STR : TAG_B_STR);
     }
     else if (g_MatchStatus == MS_SECONDHALFINITIAL || g_MatchStatus == MS_SECONDHALF)
     {
+        // SECOND HALF: T => [B], CT => [A]
         StripThenSetTag(id, (tm == CS_TEAM_T) ? TAG_B_STR : TAG_A_STR);
     }
     else
     {
+        // Any other phase — just strip
         StripThenSetTag(id, "");
     }
 }
@@ -2360,6 +2603,10 @@ stock StripAllTagsForAll()
     }
 }
 
+// --- Helpers ---
+
+// Safely strip any number of leading [A]/[B] and then set the requested prefix,
+// clamping the final game name to 31 chars (CS limit).
 stock StripThenSetTag(id, const prefix[])
 {
     if (!is_user_connected(id)) return;
@@ -2367,16 +2614,19 @@ stock StripThenSetTag(id, const prefix[])
     new name[64];
     get_user_name(id, name, charsmax(name));
 
+    // Strip any stacked tags at the very start
     while (starts_with(name, TAG_A_STR) || starts_with(name, TAG_B_STR))
     {
         if (starts_with(name, TAG_A_STR)) strip_leading(name, TAG_A_STR);
         else                               strip_leading(name, TAG_B_STR);
     }
 
+    // If desired tag already present, skip setting (reduces name-change spam)
     if (prefix[0] && starts_with(name, prefix))
         return;
 
-    const MAX_GAME_NAME = 31; 
+    // Enforce 31-char CS name limit: truncate base name so prefix+name <= 31.
+    const MAX_GAME_NAME = 31; // bytes excluding null
     new baseAllowed = MAX_GAME_NAME - strlen(prefix);
     if (baseAllowed < 0) baseAllowed = 0;
 
@@ -2409,20 +2659,26 @@ stock strip_leading(s[], const lead[])
 
 stock ShowRoundNumberHUD()
 {
+    // Format the text using total rounds (you may prefer g_HalfRound/g_TotalRounds)
     formatex(g_RoundHUDText, charsmax(g_RoundHUDText), "Round %02d", g_TotalRounds);
 
+    // 4 seconds total, updated every 0.5s => 8 steps
     g_RoundHUDSteps = 8;
     g_RoundHUDColorIdx = 0;
 
+    // Ensure no previous task is lingering (safe re-entry)
     if (task_exists(TASK_ROUNDHUD_FADE)) remove_task(TASK_ROUNDHUD_FADE);
 
+    // Start repeating task every 0.5s ("b" = repeating)
     set_task(0.5, "Task_RoundHUDFade", TASK_ROUNDHUD_FADE, _, _, "b");
 }
 
+// Repeating task that displays the DHUD with a changing color each invocation
 public Task_RoundHUDFade()
 {
     if (g_RoundHUDSteps <= 0)
     {
+        // finished — ensure task removed and clear text/indices
         if (task_exists(TASK_ROUNDHUD_FADE)) remove_task(TASK_ROUNDHUD_FADE);
         g_RoundHUDSteps = 0;
         g_RoundHUDColorIdx = 0;
@@ -2430,6 +2686,7 @@ public Task_RoundHUDFade()
         return;
     }
 
+    // Choose color by index (expand or change palette as you like)
     new r = 255, g = 255, b = 255;
     switch (g_RoundHUDColorIdx % 8)
     {
@@ -2443,26 +2700,35 @@ public Task_RoundHUDFade()
         case 7: { r = 255; g =   0; b = 180; }   // magenta
     }
 
+    // Configure DHUD appearance
+    // set_dhudmessage(r,g,b, x, y, effects, fade, hold, fadein, fadeout)
+    // We'll place it roughly center: y = 0.48 (close to vertical center)
+    // Use a short hold (0.6s) to avoid overlap and let the repeating task handle total duration.
     set_dhudmessage(r, g, b, -1.0, 0.48, 0, 0.0, 0.6, 0.05, 0.05);
 
+    // Show the prepared text (the show call uses message slot 0)
     show_dhudmessage(0, "%s", g_RoundHUDText);
 
+    // Advance animation state
     g_RoundHUDSteps--;
     g_RoundHUDColorIdx++;
 }
 
+// mark dirty and optionally rebuild immediately
 stock MarkGameDescDirty(bool:rebuild = true)
 {
     g_GameDescDirty = true;
     if (rebuild) UpdateGameDesc();
 }
 
+// Build the cached game description string based on current match state
 stock UpdateGameDesc()
 {
+    // If not dirty, skip rebuild (cheap check)
     if (!g_GameDescDirty) return;
 
     new buf[128];
-
+    // 1) WAITING
     if (g_MatchStatus == MS_WAITING)
     {
         copy(buf, charsmax(buf), "Waiting for players..");
@@ -2476,12 +2742,14 @@ stock UpdateGameDesc()
     else if (g_MatchStatus == MS_FIRSTHALF || g_MatchStatus == MS_SECONDHALF ||
              g_MatchStatus == MS_FIRSTHALFINITIAL || g_MatchStatus == MS_SECONDHALFINITIAL)
     {
+        // If match ended (flag set) show final ended message
         if (g_MatchEnded || (g_MatchStatus == MS_SECONDHALF && (g_ScoreA >= 16 || g_ScoreB >= 16)))
         {
             formatex(buf, charsmax(buf), "Match Ends: A %02d - B %02d", g_ScoreA, g_ScoreB);
         }
         else
         {
+            // show scores and round (use g_TotalRounds for overall round number)
             formatex(buf, charsmax(buf), "A %02d-%02d B | Rnd %02d", g_ScoreA, g_ScoreB, g_TotalRounds <= 0 ? 0 : g_TotalRounds);
         }
     }
@@ -2496,14 +2764,18 @@ stock UpdateGameDesc()
         copy(buf, charsmax(buf), "Automix by B@IL");
     }
 
+    // copy to cached buffer and clear dirty flag
     copy(g_GameDesc, charsmax(g_GameDesc), buf);
     g_GameDescDirty = false;
 }
 
+// MetaMod forward handler (very small/fast)
 public Change()
 {
+    // ensure cached text is fresh (cheap check)
     if (g_GameDescDirty) UpdateGameDesc();
 
+    // return cached string (fast)
     forward_return(FMV_STRING, g_GameDesc);
     return FMRES_SUPERCEDE;
 }
@@ -2513,6 +2785,7 @@ public Cmd_ShowScore(id)
     if (!is_user_connected(id) || is_user_bot(id) || is_user_hltv(id))
         return PLUGIN_HANDLED;
 
+    // Only allow if match has progressed beyond FirstHalfInitial
     if (g_MatchStatus < MS_FIRSTHALFINITIAL)
     {
         client_print_color(id, print_team_default,
@@ -2520,12 +2793,14 @@ public Cmd_ShowScore(id)
         return PLUGIN_HANDLED;
     }
 
-    ShowRoundStartHUD();   
-    AnnounceLeaderChat();  
+    // Show current score + leader
+    ShowRoundStartHUD();   // DHUD + chat line
+    AnnounceLeaderChat();  // leader/tied info
 
     return PLUGIN_HANDLED;
 }
 
+// Start the LIVE scrolling effect. duration = seconds (e.g., 4.0)
 stock StartLiveScroll(Float:duration)
 {
     if (duration <= 0.0) duration = 4.0;
@@ -2543,6 +2818,7 @@ stock StartLiveScroll(Float:duration)
     set_task(interval, "Task_LiveScrollTick", g_LiveScrollTaskId, _, _, "b");
 }
 
+// repeating tick: animate two blocks (left + right)
 public Task_LiveScrollTick()
 {
     if (g_LiveScrollSteps <= 0)
@@ -2578,6 +2854,7 @@ public Task_LiveScrollTick()
         show_dhudmessage(0, "%s", g_LiveScrollText);
     }
 
+    // <<< FIXED: build command into buffer and pass it directly to client_cmd >>>
     if (elapsed == 0)
     {
         new sndcmd[64];
