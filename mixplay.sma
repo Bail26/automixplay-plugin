@@ -1729,8 +1729,8 @@ public FirstHalf_GoLive()
     client_print_color(0, print_team_default, "^4%s^1 It's ^3LIVE LIVE LIVE^1 — ^3GOGOGOGOGO^1!", g_ChatPrefix);
 
     // First round index
-    g_HalfRound   = 1;
-    g_TotalRounds = 1;
+    g_HalfRound   = 0;
+    g_TotalRounds = 0;
 
     // Show round-start scoreboard HUD for 4 seconds
     ShowRoundStartHUD();
@@ -1745,34 +1745,22 @@ public EV_RoundStart()
     g_ScoreLocked = false;
     g_LastPlanter = 0;
 
-    // Increment round counters
     if (g_MatchStatus == MS_FIRSTHALF)
     {
-        if (g_HalfRound < 15)
-        {
-            // When not first kick-off (already set to 1 on GoLive)
-            if (g_TotalRounds > 1) { g_HalfRound++; g_TotalRounds++; }
-        }
-        // Last-round warning for first half
-        if (g_HalfRound == 15)
+        if (g_HalfRound == 14)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of First Half^1!", g_ChatPrefix);
-            //set_dhudmessage(255, 180, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
-            //show_dhudmessage(0, "Last round of First Half");
+            set_hudmessage(255, 180, 180, -1.0, 0.4, 0, 0.0, 3.0, 0.0, 0.0);
+            show_hudmessage(0, "Last round of First Half");
         }
     }
     else if((g_MatchStatus == MS_SECONDHALF))
     {
-        if (g_HalfRound < 15)
-        {
-            if (g_TotalRounds > 16) { g_HalfRound++; g_TotalRounds++; }
-        }
-        // Last round of the map (round 30 overall)
-        if (g_HalfRound == 15)
+        if (g_HalfRound == 14)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of the map^1!", g_ChatPrefix);
-            //set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
-            //show_dhudmessage(0, "Last round of the map");
+            set_hudmessage(255, 255, 180, -1.0, 0.4, 0, 0.0, 3.0, 0.0, 0.0);
+            show_hudmessage(0, "Last round of the map");
         }
     }
 
@@ -1812,10 +1800,16 @@ stock OnRoundWinner(CsTeams:winnerCS)
 
     g_ScoreLocked = true;
 
+        // AUTHORITATIVE ROUND COUNTS (at round END)
+    g_TotalRounds++; // overall rounds played
+
+    // increment half counter but cap at 15
+    if (g_HalfRound < 15) g_HalfRound++;
+
     MarkGameDescDirty(true)
 
     // Check win conditions / halftime cutoffs
-    if (g_MatchStatus == MS_FIRSTHALF && g_HalfRound >= 15)
+    if (g_MatchStatus == MS_FIRSTHALF && g_HalfRound == 15)
     {
         // lock & go halftime
         Stats_LockAtHalftime()
@@ -1998,8 +1992,8 @@ public SecondHalf_GoLive()
 {
     g_MatchStatus  = MS_SECONDHALF;
     g_ScoreLocked = false;   // unlock when a winner is detected in round end
-    g_HalfRound   = 1;
-    g_TotalRounds = 16;
+    g_HalfRound   = 0;
+    g_TotalRounds = 15;
     Stats_UnlockSecondHalf()
 
     MarkGameDescDirty(true)
@@ -2073,7 +2067,7 @@ stock SwapAllPlayersTeams()
 stock AutoAssignToSmallerTeam(id)
 {
     // Count T vs CT
-    new players[32], pnum; get_players(players, pnum, "bch");
+    new players[32], pnum; get_players(players, pnum, "ch");
     new t=0, ct=0;
     for (new i = 0; i < pnum; i++)
     {
@@ -2667,19 +2661,24 @@ stock strip_leading(s[], const lead[])
 
 stock ShowRoundNumberHUD()
 {
-    // Format the text using total rounds (you may prefer g_HalfRound/g_TotalRounds)
-    formatex(g_RoundHUDText, charsmax(g_RoundHUDText), "Round %02d", g_TotalRounds);
+    // Show the upcoming round number (last completed + 1)
+    new displayRound = g_TotalRounds + 1;
+
+    // Format with leading zero if needed
+    formatex(g_RoundHUDText, charsmax(g_RoundHUDText), "Round %02d", displayRound);
 
     // 4 seconds total, updated every 0.5s => 8 steps
     g_RoundHUDSteps = 8;
     g_RoundHUDColorIdx = 0;
 
     // Ensure no previous task is lingering (safe re-entry)
-    if (task_exists(TASK_ROUNDHUD_FADE)) remove_task(TASK_ROUNDHUD_FADE);
+    if (task_exists(TASK_ROUNDHUD_FADE))
+        remove_task(TASK_ROUNDHUD_FADE);
 
     // Start repeating task every 0.5s ("b" = repeating)
     set_task(0.5, "Task_RoundHUDFade", TASK_ROUNDHUD_FADE, _, _, "b");
 }
+
 
 // Repeating task that displays the DHUD with a changing color each invocation
 public Task_RoundHUDFade()
