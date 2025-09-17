@@ -1,4 +1,4 @@
-//Supports ReHLDS/RegameDll/reAPI Builds only
+//Supports ReHLDS/RegameDll Builds only
 
 #include <amxmodx>
 #include <amxmisc>
@@ -208,8 +208,8 @@ public plugin_init()
 
     register_clcmd("say /swap", "Cmd_SwapRequest");
 
-    register_clcmd("say /score", "Cmd_ShowScore");
-    register_clcmd("say_team /score", "Cmd_ShowScore");
+    register_clcmd("say /scores", "Cmd_ShowScore");
+    register_clcmd("say_team /scores", "Cmd_ShowScore");
 
     // Knife-only enforcement on spawn
     RegisterHam(Ham_Spawn, "player", "OnPlayerSpawnPost", 1)
@@ -1721,7 +1721,6 @@ public FX_Restart()  { server_cmd("sv_restart 1"); }
 
 public FirstHalf_GoLive()
 {
-
     g_MatchStatus  = MS_FIRSTHALF;
     g_ScoreLocked = false; // unlock at first round end
     Stats_BeginFirstHalf()
@@ -1752,28 +1751,28 @@ public EV_RoundStart()
         if (g_HalfRound < 15)
         {
             // When not first kick-off (already set to 1 on GoLive)
-            if (g_TotalRounds > 0) { g_HalfRound++; g_TotalRounds++; }
+            if (g_TotalRounds > 1) { g_HalfRound++; g_TotalRounds++; }
         }
         // Last-round warning for first half
         if (g_HalfRound == 15)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of First Half^1!", g_ChatPrefix);
-            set_dhudmessage(255, 180, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
-            show_dhudmessage(0, "Last round of First Half");
+            //set_dhudmessage(255, 180, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
+            //show_dhudmessage(0, "Last round of First Half");
         }
     }
     else if((g_MatchStatus == MS_SECONDHALF))
     {
         if (g_HalfRound < 15)
         {
-            if (g_TotalRounds > 15) { g_HalfRound++; g_TotalRounds++; }
+            if (g_TotalRounds > 16) { g_HalfRound++; g_TotalRounds++; }
         }
         // Last round of the map (round 30 overall)
         if (g_HalfRound == 15)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of the map^1!", g_ChatPrefix);
-            set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
-            show_dhudmessage(0, "Last round of the map");
+            //set_dhudmessage(255, 255, 180, -1.0, 0.12, 0, 0.0, 3.0, 0.0, 0.0);
+            //show_dhudmessage(0, "Last round of the map");
         }
     }
 
@@ -1907,10 +1906,6 @@ public Task_DoTeamSwap()
 {
     SwapAllPlayersTeams();
 
-    // Update team tags AFTER swap
-    g_TeamA_CS = CS_TEAM_CT;
-    g_TeamB_CS = CS_TEAM_T;
-
     // Now wait a bit (2s) then init second half
     set_task(2.0, "Task_SecondHalfInit");
 }
@@ -1920,7 +1915,10 @@ public Task_SecondHalfInit()
     g_MatchStatus  = MS_SECONDHALFINITIAL;
     
     g_HalfRound   = 0;         // reset half-round counter
+
     // TotalRounds continues from 15 -> will increment on round starts again
+    g_TeamA_CS = CS_TEAM_CT;
+    g_TeamB_CS = CS_TEAM_T;
 
     MarkGameDescDirty(true)
 
@@ -1931,7 +1929,7 @@ public Task_SecondHalfInit()
     //remove_task(TASK_WAIT_2NDHALF);
     //set_task(1.0, "SecondHalf_WaitForPlayers", TASK_WAIT_2NDHALF, "", 0, "b");
 
-    set_task(3.0, "SecondHalf_GoLive");
+    set_task(3.7, "SecondHalf_GoLive");
 }
 
 stock SecondHalf_IntroEffects()
@@ -1998,8 +1996,6 @@ public Task_ShowBannerSH(const text[])
 
 stock SecondHalf_GoLive()
 {
-    if (g_MatchStatus != MS_SECONDHALFINITIAL) return;
-
     g_MatchStatus  = MS_SECONDHALF;
     g_ScoreLocked = false;   // unlock when a winner is detected in round end
     g_HalfRound   = 1;
@@ -2009,6 +2005,7 @@ stock SecondHalf_GoLive()
     MarkGameDescDirty(true)
 
     client_print_color(0, print_team_default, "^4%s^1 Second half is ^3LIVE^1!", g_ChatPrefix);
+
     ShowRoundStartHUD();
 
     StartLiveScroll(4.0)
@@ -2339,8 +2336,8 @@ public Task_ShowMatchStats()
 
     // Show PAGE 1 now, page 2 after 5s, then proceed
     Task_ShowStatsPage1();
-    set_task(5.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
-    set_task(10.0, "Task_StatsFlowDone", TASK_STATS_DONE);
+    set_task(6.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
+    set_task(15.0, "Task_StatsFlowDone", TASK_STATS_DONE);
 }
 
 // ---- Request command ----
