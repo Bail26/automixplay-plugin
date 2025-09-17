@@ -1994,7 +1994,7 @@ public Task_ShowBannerSH(const text[])
     show_dhudmessage(0, msg);
 }*/
 
-stock SecondHalf_GoLive()
+public SecondHalf_GoLive()
 {
     g_MatchStatus  = MS_SECONDHALF;
     g_ScoreLocked = false;   // unlock when a winner is detected in round end
