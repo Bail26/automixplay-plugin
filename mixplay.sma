@@ -257,12 +257,14 @@ public plugin_cfg()
     server_cmd("exec %s", gCvarExecPub);
     check_map_change_file()
     StartWaitingState()
+
+    g_MapReloading = false;
 }
 
 // Called when plugin unloads (e.g., map change, manual unload)
 public plugin_end()
 {
-    CancelAllMixTasks()
+    CancelPendingFlowTasks()
 }
 
 public plugin_precache()
@@ -411,22 +413,23 @@ public client_disconnected(id)
     // If server is empty and current status is after captain-knife, reload same map
     if (g_MatchStatus > MS_CAPTAINKNIFE && !g_MapReloading)
     {
-        new i, maxplayers = get_maxplayers();
-        new connected = 0;
+        new players[32], pnum;
+        get_players(players, pnum, "ch"); 
 
-        for (i = 1; i <= maxplayers; i++)
+        if (pnum <= 0)
         {
-            if (is_user_connected(i))
-            {
-                connected = 1;
-                break; // found at least one player, no reload
-            }
-        }
 
-        if (!connected)
-        {
-            g_MapReloading = true; 
-            set_task(0.5, "Task_RestartEmptyMap");
+            CancelPendingFlowTasks();
+
+            g_MapReloading = true;
+
+            set_map_flag_not_changed(); 
+
+            set_task(2.0, "Task_RestartEmptyMap");
+
+            server_print("%s Server empty — reloading map.", g_ChatPrefix);
+
+            return;
         }
     }
 
@@ -488,13 +491,9 @@ public client_disconnected(id)
 
 public Task_RestartEmptyMap()
 {
-    set_map_flag_not_changed();
-
     new mapname[64];
     get_mapname(mapname, charsmax(mapname));
-
     server_cmd("changelevel %s", mapname);
-    server_print("%s Server empty — reloading map.", g_ChatPrefix);
 }
 
 // =====================================================
@@ -584,44 +583,6 @@ public Task_GoToNextPhase()
 }
 
 // =====================================================
-// CLEANUP
-// =====================================================
-stock CancelAllMixTasks()
-{
-    // ---- Waiting/Full flow ----
-    if (task_exists(TASK_WAITING_HUD))     remove_task(TASK_WAITING_HUD)
-    if (task_exists(TASK_NEXT_STEP))       remove_task(TASK_NEXT_STEP)
-
-    // ---- MapVote: voting window & follow-ups ----
-    if (task_exists(TASK_MAPVOTE_END))     remove_task(TASK_MAPVOTE_END)
-    if (task_exists(TASK_HUD_COUNTDOWN))   remove_task(TASK_HUD_COUNTDOWN)
-    if (task_exists(TASK_SH_COUNTDOWN))    remove_task(TASK_SH_COUNTDOWN)
-    if (task_exists(TASK_CHANGE_MAP))      remove_task(TASK_CHANGE_MAP)
-    if (task_exists(TASK_START_CAPTAINS))  remove_task(TASK_START_CAPTAINS)
-    if (task_exists(TASK_ROUNDHUD_FADE)) remove_task(TASK_ROUNDHUD_FADE);
-
-
-    // ---- Menu handle & voting state ----
-    if (g_VoteMenu != INVALID_HANDLE)
-    {
-        menu_destroy(g_VoteMenu)
-        g_VoteMenu = INVALID_HANDLE
-    }
-    g_VoteActive = false
-    g_CountdownType = CT_NONE
-    g_CountdownRemain = 0
-    g_SHRemain = 0
-
-    // Optional: clear vote tallies & per-player flags for safety
-    arrayset(g_VoteCount, 0, sizeof g_VoteCount)
-    for (new i = 1; i <= 32; i++)
-    {
-        g_HasVoted[i] = false
-        g_SelectedMapIdx[i] = -1
-    }
-}
-
-// =====================================================
 // UTILS
 // =====================================================
 stock CountEligiblePlayers()
@@ -641,6 +602,8 @@ stock StartMapVote()
         log_amx("%s StartMapVote() called in unsupported status (%d)", g_ChatPrefix, g_MatchStatus)
         return
     }
+
+    g_WinnerMap[0] = 0;
 
     if (g_VoteActive) // Guard against re-entry
     {
@@ -762,6 +725,8 @@ public Task_EndMapVote()
             client_print_color(0, print_team_default,
                 "^4%s^1 Majority has decided to ^3play on the current map^1.", g_ChatPrefix)
             // DHUD + countdown 10s: "Captain selection will begin in X seconds"
+
+            g_WinnerMap[0] = 0;
             StartCountdownHUD(floatround(CAPTAIN_START_SEC), CT_CAPTAINS)
 
             // After 10s, start captains
@@ -786,7 +751,8 @@ public Task_EndMapVote()
             "^4%s^1 Next map decided: ^3%s^1.", g_ChatPrefix, g_WinnerMap)
         // 6s HUD countdown, change at 7s
         g_SHRemain = 6
-        if (task_exists(TASK_SH_COUNTDOWN)) remove_task(TASK_SH_COUNTDOWN)
+        if (task_exists(TASK_CHANGE_MAP)) remove_task(TASK_CHANGE_MAP);
+        if (task_exists(TASK_SH_COUNTDOWN)) remove_task(TASK_SH_COUNTDOWN);
         set_task(1.0, "Task_ShowSecondHalfChangeCountdown", TASK_SH_COUNTDOWN, _, _, "b")
         // Also schedule actual change
         set_task(CHANGE_DELAY_SH_SEC, "Task_PerformChangelevel", TASK_CHANGE_MAP)
@@ -2088,7 +2054,7 @@ stock EndMatchDeclareWinner()
     MarkGameDescDirty(true);
 
     // Hand off to stats module (to be created)
-    set_task(7.0, "Task_ShowMatchStats");
+    set_task(5.0, "Task_ShowMatchStats");
 }
 
 // ==========================================================================
@@ -2353,7 +2319,6 @@ stock Stats_Reset()
         g_NameCache[i][0] = 0;
     }
 
-    g_MatchEnded = false;
     MarkGameDescDirty(true);
 }
 
@@ -2374,10 +2339,9 @@ public Task_ShowMatchStats()
     g_StatsLocked = true;
     server_cmd("exec %s", gCvarExecPub);
 
-    // Show PAGE 1 now, page 2 after 8s, then proceed
-    Task_ShowStatsPage1();
-    set_task(8.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
-    set_task(16.0, "Task_StatsFlowDone", TASK_STATS_DONE);
+    set_task(4.0, "Task_ShowStatsPage1", TASK_STATS_PAGE1);
+    set_task(13.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
+    set_task(21.0, "Task_StatsFlowDone", TASK_STATS_DONE);
 }
 
 // ---- Request command ----
@@ -2915,4 +2879,64 @@ public Task_LiveScrollTick()
     }
 
     g_LiveScrollSteps--;
+}
+
+
+// Cancel any pending timers/menus that could resume match flow or change maps
+stock CancelPendingFlowTasks()
+{
+    // Core flow tasks
+    if (task_exists(TASK_CHANGE_MAP))      remove_task(TASK_CHANGE_MAP);
+    if (task_exists(TASK_MAPVOTE_END))     remove_task(TASK_MAPVOTE_END);
+    if (task_exists(TASK_HUD_COUNTDOWN))   remove_task(TASK_HUD_COUNTDOWN);
+    if (task_exists(TASK_SH_COUNTDOWN))    remove_task(TASK_SH_COUNTDOWN);
+    if (task_exists(TASK_START_CAPTAINS))  remove_task(TASK_START_CAPTAINS);
+    if (task_exists(TASK_NEXT_STEP))       remove_task(TASK_NEXT_STEP);
+    if (task_exists(TASK_WAITING_HUD))     remove_task(TASK_WAITING_HUD);
+
+    // Captain / team selection / pick menus
+    if (task_exists(TASK_CAP_PICK_COUNTDOWN)) remove_task(TASK_CAP_PICK_COUNTDOWN);
+    if (task_exists(TASK_SIDE_MENU))          remove_task(TASK_SIDE_MENU);
+    if (task_exists(TASK_TEAMSEL_START))      remove_task(TASK_TEAMSEL_START);
+    if (task_exists(TASK_TEAMSEL_HUD))        remove_task(TASK_TEAMSEL_HUD);
+    if (task_exists(TASK_TEAMSEL_GIVE_MENU))  remove_task(TASK_TEAMSEL_GIVE_MENU);
+    if (task_exists(TASK_TEAMSEL_FINALIZE))   remove_task(TASK_TEAMSEL_FINALIZE);
+    if (task_exists(TASK_ROUND_RESTART))      remove_task(TASK_ROUND_RESTART);
+    if (task_exists(TASK_FIRSTHALF_INIT))     remove_task(TASK_FIRSTHALF_INIT);
+
+    if (task_exists(TASK_WAIT_2NDHALF))       remove_task(TASK_WAIT_2NDHALF);
+
+    for (new t = TASK_FH_EFFECTS_BASE; t < TASK_FH_EFFECTS_BASE + 32; t++)
+        if (task_exists(t)) remove_task(t);
+    for (new t = TASK_SH_EFFECTS_BASE; t < TASK_SH_EFFECTS_BASE + 32; t++)
+        if (task_exists(t)) remove_task(t);
+
+    if (task_exists(TASK_ROUNDHUD_FADE))  remove_task(TASK_ROUNDHUD_FADE);
+    if (task_exists(TASK_FINAL_DHUD))     remove_task(TASK_FINAL_DHUD);
+    if (task_exists(TASK_STATS_PAGE1))    remove_task(TASK_STATS_PAGE1);
+    if (task_exists(TASK_STATS_PAGE2))    remove_task(TASK_STATS_PAGE2);
+    if (task_exists(TASK_STATS_DONE))     remove_task(TASK_STATS_DONE);
+    if (task_exists(TASK_MAPVOTE_END))    remove_task(TASK_MAPVOTE_END);
+    if (task_exists(TASK_WAIT_2NDHALF))   remove_task(TASK_WAIT_2NDHALF);
+    if (task_exists(g_LiveScrollTaskId))  remove_task(g_LiveScrollTaskId);
+
+
+    for (new i = 1; i <= 32; i++)
+    {
+        if (task_exists(TASK_TAG_BASE + i)) remove_task(TASK_TAG_BASE + i);
+        if (task_exists(TASK_SWAP_BASE + i)) remove_task(TASK_SWAP_BASE + i);
+    }
+
+    if (g_VoteMenu != INVALID_HANDLE)
+    {
+        menu_destroy(g_VoteMenu);
+        g_VoteMenu = INVALID_HANDLE;
+    }
+    g_VoteActive = false;
+
+    g_CountdownType = CT_NONE;
+    g_CountdownRemain = 0;
+    g_SHRemain = 0;
+
+    ClosePickMenuIfOpen();
 }
