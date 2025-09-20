@@ -184,6 +184,8 @@ new Float:g_LiveScrollInterval = 0.12; // tick interval (seconds) - tweak as des
 new g_LiveScrollRightDelaySteps = 4; // computed at start
 new g_LiveScrollText[64];
 
+new bool:g_MapReloading = false; // global
+
 // -------------------------------------
 // Plugin Info
 // -------------------------------------
@@ -362,7 +364,7 @@ public client_putinserver(id)
      || g_MatchStatus == MS_FIRSTHALFINITIAL || g_MatchStatus == MS_SECONDHALFINITIAL)
     {
         client_print_color(0, print_team_default,
-            "^4%s^1 Player ^3%n^1 joined the match. Welcome to JKE Mix.", g_ChatPrefix, id)
+            "^4%s^1 Player ^3%n^1 joined the match. Welcome to the server.", g_ChatPrefix, id)
         AutoAssignToSmallerTeam(id);
         StartJoinTagFlow(id);
         return
@@ -404,6 +406,28 @@ public client_disconnected(id)
     {
         EvaluateWaitingToFull()
         // don't return; a disconnecting player *could* also be a captain in edge cases
+    }
+
+    // If server is empty and current status is after captain-knife, reload same map
+    if (g_MatchStatus > MS_CAPTAINKNIFE && !g_MapReloading)
+    {
+        new i, maxplayers = get_maxplayers();
+        new connected = 0;
+
+        for (i = 1; i <= maxplayers; i++)
+        {
+            if (is_user_connected(i))
+            {
+                connected = 1;
+                break; // found at least one player, no reload
+            }
+        }
+
+        if (!connected)
+        {
+            g_MapReloading = true; 
+            set_task(0.5, "Task_RestartEmptyMap");
+        }
     }
 
     // 2) Captain phases
@@ -460,6 +484,17 @@ public client_disconnected(id)
                 "^4%s^1 Captain left but no Spectators available to replace. Waiting...", g_ChatPrefix)
         }
     }
+}
+
+public Task_RestartEmptyMap()
+{
+    set_map_flag_not_changed();
+
+    new mapname[64];
+    get_mapname(mapname, charsmax(mapname));
+
+    server_cmd("changelevel %s", mapname);
+    server_print("%s Server empty — reloading map.", g_ChatPrefix);
 }
 
 // =====================================================
@@ -663,6 +698,8 @@ stock StartMapVote()
     // Start vote window
     g_VoteActive = true
     set_task(VOTE_DURATION_SEC, "Task_EndMapVote", TASK_MAPVOTE_END)
+
+    client_cmd(0, "spk ^"get red(e80) ninety(s45) to check(e20) use bay(s18) mass(e42) cap(s50)^"") //copied from pugmix
 }
 
 // =====================================================
@@ -753,6 +790,7 @@ public Task_EndMapVote()
         set_task(1.0, "Task_ShowSecondHalfChangeCountdown", TASK_SH_COUNTDOWN, _, _, "b")
         // Also schedule actual change
         set_task(CHANGE_DELAY_SH_SEC, "Task_PerformChangelevel", TASK_CHANGE_MAP)
+
     }
 }
 
@@ -818,6 +856,7 @@ public Task_PerformChangelevel()
 {
     // mark that we're changing so the next map boot knows
     set_map_flag_changed()
+    g_MatchEnded = false
 
     // fire the change
     server_cmd("changelevel %s", g_WinnerMap)
@@ -1733,7 +1772,7 @@ public FirstHalf_GoLive()
     g_TotalRounds = 0;
 
     // Show round-start scoreboard HUD for 4 seconds
-    ShowRoundStartHUD();
+    //ShowRoundStartHUD();
 
     StartLiveScroll(4.0)
 }
@@ -1742,15 +1781,22 @@ public EV_RoundStart()
 {
     if (g_MatchStatus != MS_FIRSTHALF && g_MatchStatus != MS_SECONDHALF) return;
 
+    if (g_MatchEnded) return;
+
     g_ScoreLocked = false;
     g_LastPlanter = 0;
 
     if (g_MatchStatus == MS_FIRSTHALF)
     {
+        if (g_HalfRound < 3)
+        {
+            client_print_color(0, print_team_default, "^4%s^1 ^3Use command ^4/swap ^3 to request swap with some player.", g_ChatPrefix);
+        }
+
         if (g_HalfRound == 14)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of First Half^1!", g_ChatPrefix);
-            set_hudmessage(255, 180, 180, -1.0, 0.4, 0, 0.0, 3.0, 0.0, 0.0);
+            set_hudmessage(255, 180, 180, -1.0, 0.6, 0, 0.0, 3.0, 0.0, 0.0);
             show_hudmessage(0, "Last round of First Half");
         }
     }
@@ -1759,7 +1805,7 @@ public EV_RoundStart()
         if (g_HalfRound == 14)
         {
             client_print_color(0, print_team_default, "^4%s^1 ^3Last round of the map^1!", g_ChatPrefix);
-            set_hudmessage(255, 255, 180, -1.0, 0.4, 0, 0.0, 3.0, 0.0, 0.0);
+            set_hudmessage(255, 255, 180, -1.0, 0.6, 0, 0.0, 3.0, 0.0, 0.0);
             show_hudmessage(0, "Last round of the map");
         }
     }
@@ -1823,6 +1869,7 @@ stock OnRoundWinner(CsTeams:winnerCS)
         if (g_ScoreA >= 16 || g_ScoreB >= 16)
         {
             EndMatchDeclareWinner();
+            g_MatchEnded = true;
             return;
         }
 
@@ -1830,6 +1877,7 @@ stock OnRoundWinner(CsTeams:winnerCS)
         if ((g_ScoreA + g_ScoreB) >= 30) // same as g_TotalRounds >= 30
         {
             EndMatchDeclareWinner();
+            g_MatchEnded = true;
             return;
         }
     }
@@ -2033,17 +2081,14 @@ stock EndMatchDeclareWinner()
     show_dhudmessage(0, msg);
 
     // Restart & exec pub cfg for post-game chat/view
-    set_task(1.0, "FX_Restart");
-    set_task(1.1, "FX_Beep");
-    server_cmd("exec %s", gCvarExecPub);
+    set_task(6.0, "FX_Restart");
+    set_task(6.1, "FX_Beep");
 
     StripAllTagsForAll();
-
-    g_MatchEnded = true;
     MarkGameDescDirty(true);
 
     // Hand off to stats module (to be created)
-    set_task(1.0, "Task_ShowMatchStats");
+    set_task(7.0, "Task_ShowMatchStats");
 }
 
 // ==========================================================================
@@ -2163,7 +2208,7 @@ public Task_ShowStatsPage1()
         n2, g_Kills[mk],
         n3, g_HSKills[mhs]);
 
-    set_hudmessage(200, 255, 200, -1.0, 0.4, 0, 0.0, 5.0, 0.0, 0.0);
+    set_hudmessage(200, 255, 200, -1.0, 0.3, 0, 0.0, 7.0, 0.0, 0.0);
     show_hudmessage(0, line);
 
 }
@@ -2191,7 +2236,7 @@ public Task_ShowStatsPage2()
         d, g_SuccessPlants[mplant],
         e, g_Kills[mbot]);
 
-    set_hudmessage(255, 220, 180, -1.0, 0.4, 0, 0.0, 5.0, 0.0, 0.0);
+    set_hudmessage(255, 220, 180, -1.0, 0.35, 0, 0.0, 8.0, 0.0, 0.0);
     show_hudmessage(0, line);
 }
 
@@ -2327,11 +2372,12 @@ public FW_ClientUserInfoChanged(id, buffer)
 public Task_ShowMatchStats()
 {
     g_StatsLocked = true;
+    server_cmd("exec %s", gCvarExecPub);
 
-    // Show PAGE 1 now, page 2 after 5s, then proceed
+    // Show PAGE 1 now, page 2 after 8s, then proceed
     Task_ShowStatsPage1();
-    set_task(6.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
-    set_task(15.0, "Task_StatsFlowDone", TASK_STATS_DONE);
+    set_task(8.0, "Task_ShowStatsPage2", TASK_STATS_PAGE2);
+    set_task(16.0, "Task_StatsFlowDone", TASK_STATS_DONE);
 }
 
 // ---- Request command ----
@@ -2340,7 +2386,7 @@ public Cmd_SwapRequest(id) {
 
     // Check game status & round restriction
     if (!(g_MatchStatus == MS_FIRSTHALFINITIAL || 
-         (g_MatchStatus == MS_FIRSTHALF && g_HalfRound < 2))) {
+         (g_MatchStatus == MS_FIRSTHALF && g_HalfRound < 3))) {
         client_print_color(id, print_team_default, "^4%s^1 Swap requests not allowed now.", g_ChatPrefix);
         return PLUGIN_HANDLED;
     }
@@ -2362,7 +2408,7 @@ public Cmd_SwapRequest(id) {
     new menu = menu_create(title, "SwapMenu_Handler");
 
     new players[32], pnum;
-    get_players(players, pnum, "ch"); // all humans
+    get_players(players, pnum, "ch"); 
     for (new i=0; i<pnum; i++) {
         new pid = players[i];
         if (pid == id) continue;
@@ -2482,8 +2528,8 @@ stock DoSwapPlayers(id1, id2) {
 
     // Re-apply tags for both, after a short delay
     // (0.2s is enough to avoid racing name/team updates)
-    set_task(0.2, "Task_ApplyHalfTag", TASK_SWAP_BASE + id1);
-    set_task(0.2, "Task_ApplyHalfTag", TASK_SWAP_BASE + id2);
+    set_task(0.5, "Task_ApplyHalfTag", TASK_SWAP_BASE + id1);
+    set_task(0.5, "Task_ApplyHalfTag", TASK_SWAP_BASE + id2);
 
     new n1[32], n2[32];
     get_user_name(id1, n1, charsmax(n1));
@@ -2555,7 +2601,6 @@ stock ApplyHalfTagsForAll()
         }
     }
 }
-
 
 stock StartJoinTagFlow(id)
 {
