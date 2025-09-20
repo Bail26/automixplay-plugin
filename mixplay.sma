@@ -603,7 +603,15 @@ stock StartMapVote()
         return
     }
 
+    // Defensive clears to avoid leftover HUDs / scheduled tasks from prior flow
     g_WinnerMap[0] = 0;
+    g_CountdownType = CT_NONE;
+    g_CountdownRemain = 0;
+    g_SHRemain = 0;
+
+    if (task_exists(TASK_CHANGE_MAP)) remove_task(TASK_CHANGE_MAP);
+    if (task_exists(TASK_SH_COUNTDOWN)) remove_task(TASK_SH_COUNTDOWN);
+    if (task_exists(TASK_HUD_COUNTDOWN)) remove_task(TASK_HUD_COUNTDOWN);
 
     if (g_VoteActive) // Guard against re-entry
     {
